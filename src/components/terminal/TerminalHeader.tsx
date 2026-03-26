@@ -2,10 +2,10 @@
 
 import { Link } from '@/i18n/navigation';
 import {
-  BookOpen,
   Network,
   RefreshCw,
   Share,
+  TrendingUp,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
@@ -81,19 +81,17 @@ export function TerminalHeader({
                   {nav('terminal')}
                 </Link>
                 <Link
-                  href="/dashboard"
-                  className="inline-flex h-8 items-center rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] font-semibold text-white/68 transition hover:bg-white/[0.06]"
-                  title="View stored sessions"
+                  href="/trending"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] font-semibold text-white/68 transition hover:bg-white/[0.06]"
                 >
-                  {nav('dashboard')}
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  {nav('reports')}
                 </Link>
                 <Link
-                  href="/how-it-works"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] font-semibold text-white/68 transition hover:bg-white/[0.06]"
-                  title="Architecture and docs"
+                  href="/asset"
+                  className="inline-flex h-8 items-center rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] font-semibold text-white/68 transition hover:bg-white/[0.06]"
                 >
-                  <BookOpen className="h-3.5 w-3.5" />
-                  {nav('architecture')}
+                  {common('assets')}
                 </Link>
               </div>
               <div className="flex items-center gap-2">

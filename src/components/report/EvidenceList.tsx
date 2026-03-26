@@ -5,6 +5,7 @@ import { SectionLabel } from '@/components/ui/section-label';
 import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { classifySourceTier } from '@/lib/report-quality';
 
 const LOCALE_MAP: Record<string, string> = { en: 'en-US', es: 'es-MX', zh: 'zh-CN' };
 
@@ -51,8 +52,12 @@ export async function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
       </CardHeader>
 
       <CardContent className="space-y-3">
-        {evidence.map((item) => (
-          <Card key={item.id} className="p-4">
+        {evidence.map((item) => {
+          const tier = classifySourceTier(item);
+          const tierVariant = tier === 'official' ? 'teal' : tier === 'primary' ? 'blue' : 'neutral';
+
+          return (
+            <Card key={item.id} className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <a
@@ -67,6 +72,9 @@ export async function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
                   <span>{domainOf(item.url)}</span>
                   <span>·</span>
                   <span>{fmtDate(item.publishedAt)}</span>
+                  <Badge variant={tierVariant}>
+                    {tier}
+                  </Badge>
                 </div>
               </div>
               {item.aiSummary?.sentiment && (
@@ -103,8 +111,9 @@ export async function EvidenceList({ evidence }: { evidence: EvidenceItem[] }) {
                 ) : null}
               </div>
             )}
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </CardContent>
     </Card>
   );

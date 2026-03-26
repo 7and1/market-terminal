@@ -21,6 +21,7 @@ import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/Button';
+import { assessMarketQueryScope } from '@/lib/market-query-scope';
 
 const LANDING_EXAMPLES = [
   'Why is NVDA moving after earnings today?',
@@ -118,6 +119,8 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
   const runSearch = () => {
     const cleaned = query.trim();
     if (!cleaned) return;
+    const scope = assessMarketQueryScope({ topic: cleaned });
+    if (!scope.ok) return;
     router.push(`/terminal?q=${encodeURIComponent(cleaned)}&runAt=${Date.now()}`);
   };
 
@@ -243,16 +246,16 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
 
               <Card className="p-4 text-left">
                 <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
-                  {t('hubToolsTitle')}
+                  Stay in terminal
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-white/56">
-                  {t('hubToolsDesc')}
+                  Start a fresh run, revisit a stored snapshot, or monitor the same setup again when the evidence changes.
                 </p>
                 <Link
-                  href="/tools"
+                  href="/terminal"
                   className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--blue)] transition hover:text-white/82"
                 >
-                  {t('hubToolsCta')} <ArrowUpRight className="h-3.5 w-3.5" />
+                  Open terminal <ArrowUpRight className="h-3.5 w-3.5" />
                 </Link>
               </Card>
             </div>

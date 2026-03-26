@@ -15,6 +15,7 @@ import {
 import type { GraphEdge, GraphNode } from '@/components/terminal/types';
 import { createEmptyTracePage, createEmptyUsageSummary } from '@/components/terminal/terminal-state';
 import type { TerminalSharedState } from '@/components/terminal/hooks/useTerminalSharedState';
+import { assessMarketQueryScope } from '@/lib/market-query-scope';
 import { apiPath } from '@/lib/utils';
 import { trackEvent } from '@/lib/analytics';
 import { asRecord, normalizePerformanceSummary } from '@/lib/session-data';
@@ -88,6 +89,21 @@ export function useTerminalRun({
     async (rawTopic: string, question?: string) => {
       const cleaned = rawTopic.trim() || 'Bitcoin';
       const cleanedQ = typeof question === 'string' ? question.trim() : '';
+      const scope = assessMarketQueryScope({ topic: cleaned, question: cleanedQ || undefined });
+      if (!scope.ok) {
+        const examples = scope.supportedExamples.slice(0, 3).join(' | ');
+        store.setWarnings((prev) => [scope.message, ...(examples ? [`Try: ${examples}`] : []), ...prev].slice(0, 4));
+        store.setMessages((prev) => [
+          ...prev,
+          {
+            id: `m_${Math.random().toString(16).slice(2)}`,
+            role: 'assistant',
+            content: [scope.message, examples ? `Try: ${examples}` : ''].filter(Boolean).join('\n'),
+            createdAt: now(),
+          },
+        ]);
+        return;
+      }
 
       runAbortRef.current?.abort();
       const abort = new AbortController();
@@ -516,8 +532,18 @@ export function useTerminalRun({
       } catch {
         // ignore clipboard failures
       }
-    } catch {
-      // silent fail, keep prior behavior
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Publish failed';
+      store.setWarnings((prev) => [message, ...prev].slice(0, 4));
+      store.setMessages((prev) => [
+        ...prev,
+        {
+          id: `m_${Math.random().toString(16).slice(2)}`,
+          role: 'assistant',
+          content: message,
+          createdAt: now(),
+        },
+      ]);
     } finally {
       setPublishing(false);
     }

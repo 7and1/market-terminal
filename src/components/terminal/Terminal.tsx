@@ -85,7 +85,7 @@ export function Terminal() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [chatPanelOpen, setChatPanelOpen] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [activeInsightPanel, setActiveInsightPanel] = useState<InsightPanelKey>('tape');
+  const [activeInsightPanel, setActiveInsightPanel] = useState<InsightPanelKey>('sources');
 
   const [debugBrowserLogs, setDebugBrowserLogs] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);

@@ -4,6 +4,7 @@ import { Link } from '@/i18n/navigation';
 import { setRequestLocale } from 'next-intl/server';
 import { hasDb, listByAsset } from '@/lib/db';
 import { aggregateAssetData } from '@/lib/asset-aggregation';
+import { filterPublishableSessions } from '@/lib/report-quality';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
@@ -15,6 +16,7 @@ import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { MomentumBadge } from '@/components/ui/momentum-badge';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { CreateMonitorButton } from '@/components/report/CreateMonitorButton';
 
 type Props = { params: Promise<{ locale: string; key: string }> };
 
@@ -112,7 +114,7 @@ export default async function AssetPage({ params }: Props) {
     );
   }
 
-  const sessions = await listByAsset(key).catch(() => null);
+  const sessions = await listByAsset(key).then(filterPublishableSessions).catch(() => null);
   if (sessions === null) {
     return (
       <div className="min-h-screen">
@@ -194,6 +196,39 @@ export default async function AssetPage({ params }: Props) {
           </div>
         </Card>
 
+        {latestPublishedSession?.slug ? (
+          <Card className="p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">Latest report</div>
+                <h2 className="mt-2 text-lg font-semibold text-white/88">{latestPublishedSession.topic}</h2>
+                <p className="mt-1 text-sm text-white/55">
+                  Last updated {new Date(latestPublishedSession._creationTime).toLocaleDateString(dateFmt)}. Use this as
+                  the current baseline before checking catalyst history and prior reports.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" asChild>
+                  <Link href={`/report/${latestPublishedSession.slug}`}>
+                    Open latest report &rarr;
+                  </Link>
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/terminal?sessionId=${encodeURIComponent(latestPublishedSession.sessionId)}`}>
+                    Open latest snapshot &rarr;
+                  </Link>
+                </Button>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <CreateMonitorButton topic={label} />
+              <div className="text-xs text-white/45">
+                Create a deep monitor to compare future runs against this asset&apos;s current evidence map.
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
         {/* Latest clusters */}
         {agg.latestClusters.length > 0 && (
           <section className="mt-6">
@@ -261,7 +296,7 @@ export default async function AssetPage({ params }: Props) {
         {/* Historical reports */}
         {agg.reports.length > 0 && (
           <section className="mt-6">
-            <SectionLabel className="mb-3">Reports</SectionLabel>
+            <SectionLabel className="mb-3">Recent report history</SectionLabel>
             <div className="space-y-2">
               {agg.reports.map((r) => (
                 <Link
@@ -295,6 +330,7 @@ export default async function AssetPage({ params }: Props) {
               </Link>
             </Button>
           ) : null}
+          <CreateMonitorButton topic={label} />
         </div>
       </PageContainer>
 

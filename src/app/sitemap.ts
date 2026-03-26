@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { listPublished } from '@/lib/db';
-import { publicToolPaths } from '@/lib/tool-catalog';
+import { filterPublishableSessions } from '@/lib/report-quality';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,15 +30,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const staticPages: MetadataRoute.Sitemap = [
     localizedEntry(baseUrl, '', 'daily', 1.0),
-    localizedEntry(baseUrl, '/how-it-works', 'weekly', 0.7),
+    localizedEntry(baseUrl, '/terminal', 'daily', 0.95),
     localizedEntry(baseUrl, '/asset', 'daily', 0.8),
     localizedEntry(baseUrl, '/trending', 'daily', 0.9),
-    ...publicToolPaths.map((path) => localizedEntry(baseUrl, path, 'weekly', path === '/tools/api' ? 0.75 : 0.8)),
-    localizedEntry(baseUrl, '/tools', 'weekly', 0.9),
   ];
 
   try {
-    const published = await listPublished();
+    const published = filterPublishableSessions(await listPublished());
 
     const reportPages: MetadataRoute.Sitemap = published
       .filter((s) => s.slug)

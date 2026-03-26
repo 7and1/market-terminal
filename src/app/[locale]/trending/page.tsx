@@ -11,6 +11,7 @@ import { SectionLabel } from '@/components/ui/section-label';
 import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/Button';
+import { filterPublishableSessions } from '@/lib/report-quality';
 import { firstEvidenceSentiment } from '@/lib/session-data';
 
 export const dynamic = 'force-dynamic';
@@ -91,7 +92,7 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
 
   if (!loadError) {
     try {
-      const sessions = await listPublished();
+      const sessions = filterPublishableSessions(await listPublished());
       const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
 
       for (const s of sessions) {

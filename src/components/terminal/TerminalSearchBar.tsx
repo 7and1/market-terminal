@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
 const TOPIC_QUICK_STARTS = [
-  'BTC drawdown today',
   'NVDA after earnings',
+  'BTC drawdown today',
   'Yields vs growth stocks',
-  'Tariffs and industrials',
+  'Fed spillover to gold',
 ] as const;
 
 export function TerminalSearchBar({
@@ -63,8 +63,8 @@ export function TerminalSearchBar({
       </form>
 
       <div className="text-[11px] leading-relaxed text-white/45">
-        Use market questions only: asset, sector, macro, or policy-driven moves. Generic queries such as weather or
-        travel are out of scope.
+        Use market questions only: asset, sector, macro, policy, or event-driven moves. Off-domain prompts stay in
+        draft and cannot become public reports.
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">

@@ -4,6 +4,7 @@ import { Link } from '@/i18n/navigation';
 import { setRequestLocale } from 'next-intl/server';
 
 import { getBySlug, hasDb, listByAsset } from '@/lib/db';
+import { collectTopLabels, filterPublishableSessions, pickKeyEvidence, summarizeReportQuality } from '@/lib/report-quality';
 import { ReportHeader } from '@/components/report/ReportHeader';
 import { StaticMindMap } from '@/components/report/StaticMindMap';
 import { ClustersSummary } from '@/components/report/ClustersSummary';
@@ -24,6 +25,16 @@ type Props = {
 
 async function fetchSession(slug: string) {
   return await getBySlug(slug);
+}
+
+function uniqueStrings(values: Array<string | null | undefined>, limit: number) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, limit);
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -47,9 +58,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const localizedPath = `${locale === 'en' ? '' : `/${locale}`}/report/${slug}`;
   const pageUrl = `${baseUrl}${localizedPath}`;
   const arts = ((session.meta as Record<string, unknown>)?.artifacts ?? {}) as Record<string, unknown>;
-  const evCount = Array.isArray(arts.evidence) ? arts.evidence.length : 0;
+  const evidence = (arts.evidence as { id: string; title: string; url: string; source: string; publishedAt: number; observedAt: number; timeKind: 'published' | 'observed' }[]) ?? [];
+  const quality = summarizeReportQuality(evidence);
+  const evCount = quality.evidenceCount;
   const clusterCount = Array.isArray(arts.clusters) ? arts.clusters.length : 0;
-  const description = `TrendAnalysis report for ${topic} — evidence-backed research with ${evCount} sources.`;
+  const description = quality.publishable
+    ? `TrendAnalysis report for ${topic} with ${evCount} evidence items across ${quality.uniqueDomainCount} domains.`
+    : `Legacy TrendAnalysis report for ${topic}. This page remains accessible, but it does not meet the current public evidence threshold.`;
 
   const ogParams = new URLSearchParams({
     topic,
@@ -75,6 +90,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       images: [ogImageUrl],
     },
+    robots: quality.publishable
+      ? undefined
+      : {
+          index: false,
+          follow: false,
+        },
     alternates: {
       canonical: pageUrl,
       languages: {
@@ -133,6 +154,15 @@ export default async function ReportPage({ params }: Props) {
   const nodes = (artifacts.nodes as { id: string; type: 'asset' | 'event' | 'entity' | 'source' | 'media'; label: string; meta?: Record<string, unknown> }[]) ?? [];
   const edges = (artifacts.edges as { id: string; from: string; to: string; type: 'mentions' | 'co_moves' | 'hypothesis' | 'same_story'; confidence: number; evidenceIds: string[]; rationale?: string }[]) ?? [];
   const clusters = (artifacts.clusters as { id: string; title: string; summary: string; momentum: 'rising' | 'steady' | 'fading'; evidenceIds: string[]; related: string[] }[]) ?? [];
+  const quality = summarizeReportQuality(evidence);
+  const sortedEvidence = [...evidence].sort((a, b) => {
+    const tsA = Math.max(Number(a.publishedAt || 0), Number(a.observedAt || 0));
+    const tsB = Math.max(Number(b.publishedAt || 0), Number(b.observedAt || 0));
+    return tsB - tsA;
+  });
+  const keyEvidence = pickKeyEvidence(sortedEvidence, 3);
+  const topCatalysts = collectTopLabels(sortedEvidence, 'catalysts', 6);
+  const topEntities = collectTopLabels(sortedEvidence, 'entities', 6);
 
   const mode = (meta.mode as 'fast' | 'deep') ?? 'fast';
   const monitorDiff = meta.monitorDiff as
@@ -154,12 +184,36 @@ export default async function ReportPage({ params }: Props) {
   const assetLabel = assetKey
     ? decodeURIComponent(assetKey).replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
     : null;
+  const peerAssets = uniqueStrings(
+    nodes
+      .filter((node) => node.type === 'asset')
+      .map((node) => node.label)
+      .filter((label) => label.toLowerCase() !== session.topic.toLowerCase()),
+    5,
+  );
+  const whatMoved = uniqueStrings(
+    [
+      ...clusters.slice(0, 2).map((cluster) => cluster.summary),
+      ...keyEvidence.flatMap((item) => item.aiSummary?.bullets || []),
+      ...keyEvidence.map((item) => item.excerpt || item.title),
+    ],
+    4,
+  );
+  const whyItMatters = uniqueStrings(
+    [
+      topCatalysts.length ? `Recurring catalysts in the current evidence set: ${topCatalysts.slice(0, 4).join(', ')}.` : '',
+      peerAssets.length ? `Cross-market or peer read-through appears in ${peerAssets.slice(0, 4).join(', ')}.` : '',
+      monitorDiff?.summary || '',
+      topEntities.length ? `Entities driving the narrative include ${topEntities.slice(0, 4).join(', ')}.` : '',
+    ],
+    4,
+  );
 
   // Fetch related reports for the same asset
   let relatedReports: { slug: string; topic: string; date: number }[] = [];
   if (assetKey) {
     try {
-      const siblings = await listByAsset(assetKey, 4);
+      const siblings = filterPublishableSessions(await listByAsset(assetKey, 6));
       relatedReports = siblings
         .filter((s) => s.slug && s.slug !== slug)
         .slice(0, 3)
@@ -213,12 +267,97 @@ export default async function ReportPage({ params }: Props) {
           date={date}
           mode={mode}
           stats={{
-            evidence: evidence.length,
-            nodes: nodes.length,
-            edges: edges.length,
-            clusters: clusters.length,
+            evidence: quality.evidenceCount,
+            domains: quality.uniqueDomainCount,
+            latestEvidenceAt: quality.latestEvidenceAt,
+            officialCount: quality.officialCount,
+            primaryCount: quality.primaryCount,
+            secondaryCount: quality.secondaryCount,
           }}
         />
+
+        {!quality.publishable ? (
+          <Card className="border-amber-400/20 bg-amber-400/5 p-5">
+            <h2 className="text-sm font-semibold text-white/88">Legacy report below the current publish threshold</h2>
+            <p className="mt-2 text-sm leading-relaxed text-white/60">
+              This page is still available by direct link, but it is excluded from indexing and public discovery until
+              the evidence set meets the current report standard.
+            </p>
+            <div className="mt-3 space-y-1 text-xs text-white/55">
+              {quality.issues.map((issue) => (
+                <div key={issue}>{issue}</div>
+              ))}
+            </div>
+          </Card>
+        ) : null}
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card className="p-5 lg:col-span-1">
+            <h2 className="text-sm font-semibold text-white/84">What moved</h2>
+            <div className="mt-3 space-y-2">
+              {whatMoved.length ? (
+                whatMoved.map((item) => (
+                  <div key={item} className="flex gap-2 text-sm leading-relaxed text-white/68">
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[rgba(120,196,255,0.9)]" />
+                    <span>{item}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-white/55">No concise market narrative could be extracted from this run.</p>
+              )}
+            </div>
+          </Card>
+
+          <Card className="p-5 lg:col-span-1">
+            <h2 className="text-sm font-semibold text-white/84">Why it matters</h2>
+            <div className="mt-3 space-y-2">
+              {whyItMatters.length ? (
+                whyItMatters.map((item) => (
+                  <div key={item} className="flex gap-2 text-sm leading-relaxed text-white/68">
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[rgba(255,179,102,0.9)]" />
+                    <span>{item}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-white/55">The evidence set is still too thin to support a strong market read-through.</p>
+              )}
+            </div>
+          </Card>
+
+          <Card className="p-5 lg:col-span-1">
+            <h2 className="text-sm font-semibold text-white/84">Cross-market and source footing</h2>
+            <div className="mt-3 space-y-3 text-sm text-white/62">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Top domains</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {quality.topDomains.length ? (
+                    quality.topDomains.map((domain) => (
+                      <span key={domain} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70">
+                        {domain}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-white/50">No source domains recorded</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Peer assets and spillovers</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {peerAssets.length ? (
+                    peerAssets.map((label) => (
+                      <span key={label} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70">
+                        {label}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-white/50">No peer assets surfaced strongly enough in this run.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
 
         {monitorDiff?.headline && monitorDiff?.summary ? (
           <Card className="p-5">
@@ -256,15 +395,13 @@ export default async function ReportPage({ params }: Props) {
           </Card>
         ) : null}
 
-        {nodes.length > 0 && (
-          <StaticMindMap topic={session.topic} nodes={nodes} edges={edges} />
-        )}
+        <EvidenceList evidence={sortedEvidence} />
 
         {clusters.length > 0 && <ClustersSummary clusters={clusters} />}
 
-        {tape.length > 0 && <StaticTimeline items={tape} />}
+        {tape.length > 2 ? <StaticTimeline items={tape} /> : null}
 
-        <EvidenceList evidence={evidence} />
+        {nodes.length > 0 ? <StaticMindMap topic={session.topic} nodes={nodes} edges={edges} /> : null}
 
         {/* Related reports for same asset */}
         {assetKey && assetLabel && (

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import LandingClient from '@/components/landing/LandingClient';
 import { listPublished } from '@/lib/db';
+import { filterPublishableSessions } from '@/lib/report-quality';
 import { firstEvidenceSentiment } from '@/lib/session-data';
 
 export const dynamic = 'force-dynamic';
@@ -64,7 +65,7 @@ export default async function HomePage({
   let trendingTopics: { assetKey: string; label: string; count: number; sentiment: string | null }[] = [];
 
   try {
-    const sessions = await listPublished();
+    const sessions = filterPublishableSessions(await listPublished());
     const grouped = new Map<string, { count: number; sentiment: string | null }>();
 
     for (const s of sessions) {

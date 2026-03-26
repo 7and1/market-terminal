@@ -4,11 +4,10 @@ import { usePathname } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
 import {
+  Activity,
   BarChart3,
   Globe,
-  LayoutDashboard,
   Menu,
-  Sparkles,
   TrendingUp,
 } from 'lucide-react';
 
@@ -39,12 +38,28 @@ export function SiteHeader({ className }: { className?: string }) {
   const rawPathname = usePathname();
   const locale = useLocale();
   const t = useTranslations('nav');
+  const common = useTranslations('common');
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const NAV_ITEMS = [
-    { href: '/trending' as const, label: t('trending'), icon: TrendingUp },
-    { href: '/tools' as const, label: t('tools'), icon: Sparkles },
-    { href: '/asset' as const, label: t('reports'), icon: BarChart3 },
+    {
+      href: '/terminal' as const,
+      label: t('terminal'),
+      icon: Activity,
+      matches: ['/terminal'],
+    },
+    {
+      href: '/trending' as const,
+      label: t('reports'),
+      icon: TrendingUp,
+      matches: ['/trending', '/report'],
+    },
+    {
+      href: '/asset' as const,
+      label: common('assets'),
+      icon: BarChart3,
+      matches: ['/asset'],
+    },
   ];
 
   // Strip locale prefix for active detection
@@ -68,8 +83,8 @@ export function SiteHeader({ className }: { className?: string }) {
 
             {/* Desktop Nav */}
             <nav className="hidden items-center gap-1 sm:flex">
-              {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-                const active = pathname === href || pathname?.startsWith(href + '/');
+              {NAV_ITEMS.map(({ href, label, icon: Icon, matches }) => {
+                const active = matches.some((prefix) => pathname === prefix || pathname?.startsWith(prefix + '/'));
                 return (
                   <Link
                     key={href}
@@ -86,18 +101,6 @@ export function SiteHeader({ className }: { className?: string }) {
                   </Link>
                 );
               })}
-              <Link
-                href="/dashboard"
-                className={cn(
-                  'inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors',
-                  pathname === '/dashboard'
-                    ? 'bg-white/[0.08] text-white/90'
-                    : 'text-white/40 hover:bg-white/[0.04] hover:text-white/70',
-                )}
-                title={t('dashboard')}
-              >
-                <LayoutDashboard className="h-3.5 w-3.5" />
-              </Link>
 
               {/* Language Switcher */}
               <LanguageSwitcher locale={locale} pathname={pathname} />
@@ -116,8 +119,8 @@ export function SiteHeader({ className }: { className?: string }) {
                   <SheetTitle>{t('navigation')}</SheetTitle>
                 </SheetHeader>
                 <nav className="mt-6 flex flex-col gap-1">
-                  {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-                    const active = pathname === href || pathname?.startsWith(href + '/');
+                  {NAV_ITEMS.map(({ href, label, icon: Icon, matches }) => {
+                    const active = matches.some((prefix) => pathname === prefix || pathname?.startsWith(prefix + '/'));
                     return (
                       <Link
                         key={href}
@@ -135,19 +138,6 @@ export function SiteHeader({ className }: { className?: string }) {
                       </Link>
                     );
                   })}
-                  <Link
-                    href="/dashboard"
-                    onClick={() => setMobileOpen(false)}
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                      pathname === '/dashboard'
-                        ? 'bg-white/[0.08] text-white/90'
-                        : 'text-white/60 hover:bg-white/[0.04] hover:text-white/80',
-                    )}
-                  >
-                    <LayoutDashboard className="h-4 w-4" />
-                    {t('dashboard')}
-                  </Link>
 
                   {/* Mobile Language Switcher */}
                   <div className="mt-4 border-t border-white/[0.08] pt-4">

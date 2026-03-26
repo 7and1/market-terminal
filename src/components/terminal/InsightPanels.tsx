@@ -13,8 +13,8 @@ import type { PriceResponse, PriceScaleMode, VideosResponse } from '@/components
 export type InsightPanelKey = 'tape' | 'sources' | 'narratives' | 'price' | 'media';
 
 const PANEL_META: Record<InsightPanelKey, { label: string; icon: typeof Newspaper }> = {
-  tape: { label: 'Breaking Tape', icon: Newspaper },
   sources: { label: 'Sources', icon: Globe },
+  tape: { label: 'Breaking Tape', icon: Newspaper },
   narratives: { label: 'Narratives', icon: BookOpen },
   price: { label: 'Price Context', icon: BarChart3 },
   media: { label: 'Media', icon: Clapperboard },

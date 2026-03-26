@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { hasDb, getSession, publishSession } from '@/lib/db';
 import { createLogger } from '@/lib/log';
+import { summarizeSessionQuality } from '@/lib/report-quality';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -107,6 +108,29 @@ export async function POST(request: Request) {
       url: `${basePath}/report/${session.slug}`,
       alreadyPublished: true,
     });
+  }
+
+  const quality = summarizeSessionQuality(session);
+  if (!quality.publishable) {
+    const message = [
+      'This run does not meet the public report threshold yet.',
+      ...quality.issues,
+    ].join(' ');
+    log.warn('sessions.publish.quality_rejected', {
+      sessionId,
+      evidence: quality.evidenceCount,
+      uniqueDomains: quality.uniqueDomainCount,
+      primaryLikeCount: quality.primaryLikeCount,
+      ms: Date.now() - startedAt,
+    });
+    return NextResponse.json(
+      {
+        error: message,
+        code: 'INSUFFICIENT_REPORT_QUALITY',
+        quality,
+      },
+      { status: 422 },
+    );
   }
 
   const assetKey = normalizeAssetKey(session.topic);
