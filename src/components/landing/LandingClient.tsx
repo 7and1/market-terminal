@@ -23,10 +23,10 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/Button';
 
 const LANDING_EXAMPLES = [
-  'How is AI disrupting the healthcare industry?',
-  'NVDA earnings impact: what does the evidence show?',
-  'Bitcoin vs Gold: which is trending stronger?',
-  'What are the key signals in the EV market today?',
+  'Why is NVDA moving after earnings today?',
+  'BTC vs gold: which macro drivers matter more this week?',
+  'How are yields and the dollar affecting tech right now?',
+  'What policy catalysts are moving oil and energy equities?',
 ] as const;
 
 const SENTIMENT_DOT: Record<string, string> = {
@@ -49,6 +49,10 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
   const tc = useTranslations('common');
   const [query, setQuery] = useState('');
   const [typedHint, setTypedHint] = useState('');
+  const [lastSessionId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem('market_terminal:last_session_id') || '';
+  });
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -179,6 +183,11 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
               </div>
             </form>
 
+            <div className="mx-auto mt-3 max-w-[860px] text-left text-[11px] leading-relaxed text-white/48 sm:text-center">
+              Use asset, sector, macro, or policy questions only. Generic prompts like weather, travel, or everyday
+              Q&amp;A are outside this workflow.
+            </div>
+
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
               {LANDING_EXAMPLES.map((example) => (
                 <button
@@ -190,6 +199,15 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
                   {example}
                 </button>
               ))}
+              {lastSessionId ? (
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-full border border-[rgba(0,102,255,0.32)] bg-[rgba(0,102,255,0.14)] px-3 text-xs text-[rgba(199,228,255,0.96)] transition hover:bg-[rgba(0,102,255,0.22)]"
+                  onClick={() => router.push(`/terminal?sessionId=${encodeURIComponent(lastSessionId)}`)}
+                >
+                  {t('resumeLastSession')}
+                </button>
+              ) : null}
             </div>
 
             {/* Trending Section */}

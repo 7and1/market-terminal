@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import { Activity, Database, Link2, Layers } from 'lucide-react';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { ToolPageLayout } from '@/components/tools/ToolPageLayout';
+import { getRelatedTools } from '@/lib/tool-catalog';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'metadata' });
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const canonical = `${baseUrl}${locale === 'en' ? '' : `/${locale}`}/tools/market-analyzer`;
 
   return {
     title: t('trendAnalyzerTitle'),
@@ -18,7 +20,19 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
       'evidence-based analysis',
       'market sentiment tool',
     ],
+    openGraph: {
+      title: t('trendAnalyzerTitle'),
+      description: t('trendAnalyzerDesc'),
+      type: 'website',
+      url: canonical,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: t('trendAnalyzerTitle'),
+      description: t('trendAnalyzerDesc'),
+    },
     alternates: {
+      canonical,
       languages: {
         en: `${baseUrl}/tools/market-analyzer`,
         es: `${baseUrl}/es/tools/market-analyzer`,
@@ -114,6 +128,13 @@ function ExampleOutput() {
 export default async function MarketAnalyzerPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
+  const relatedTools = getRelatedTools('market-analyzer', 'research')
+    .slice(0, 3)
+    .map((tool) => ({
+      href: tool.href,
+      title: tool.title,
+      description: tool.description,
+    }));
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -124,6 +145,12 @@ export default async function MarketAnalyzerPage({ params }: { params: Promise<{
     applicationCategory: 'FinanceApplication',
     operatingSystem: 'Web',
     inLanguage: locale,
+    featureList: [
+      'Live SERP-backed discovery',
+      'Evidence extraction',
+      'Sentiment and entity analysis',
+      'Graph-ready research artifacts',
+    ],
     offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   };
 
@@ -133,9 +160,31 @@ export default async function MarketAnalyzerPage({ params }: { params: Promise<{
       description="Search any market topic and get AI-generated evidence maps with live data, sentiment analysis, and entity extraction from multiple sources."
       keywords={['trend analyzer', 'AI market research tool']}
       features={features}
+      useCases={[
+        'Run a fast evidence-backed brief for a stock, crypto asset, macro theme, or earnings event.',
+        'Turn a broad market question into traceable evidence before publishing a report or snapshot.',
+        'Demonstrate the full TrendAnalysis.ai pipeline, not just the terminal shell, from search through linked artifacts.',
+      ]}
       searchPlaceholder="e.g. NVDA earnings impact, BTC halving effects..."
       exampleOutput={<ExampleOutput />}
       statsLine="Aggregates 10+ sources per query across news, analysis, and social channels."
+      apiSurface={[
+        {
+          method: 'POST',
+          path: '/api/run',
+          description:
+            'Launches the full research workflow that powers this tool, including planning, search, evidence extraction, graph construction, and report artifacts.',
+          example: 'POST /api/run { "topic": "NVDA earnings impact", "mode": "fast" }',
+        },
+        {
+          method: 'GET',
+          path: '/api/serp',
+          description:
+            'Use the read-only search layer independently when you want to validate query freshness before triggering a full run.',
+          example: 'GET /api/serp?q=NVDA%20earnings&vertical=news&recency=d',
+        },
+      ]}
+      relatedTools={relatedTools}
       jsonLd={jsonLd}
     />
   );

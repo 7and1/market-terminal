@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Link } from '@/i18n/navigation';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { listPublished } from '@/lib/db';
+import { hasDb, listPublished } from '@/lib/db';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
@@ -19,6 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'metadata' });
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const canonical = `${baseUrl}${locale === 'en' ? '' : `/${locale}`}/trending`;
 
   return {
     title: t('trendingTitle'),
@@ -30,7 +31,19 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
       'crypto analysis',
       'trend analysis',
     ],
+    openGraph: {
+      title: t('trendingTitle'),
+      description: t('trendingDesc'),
+      type: 'website',
+      url: canonical,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: t('trendingTitle'),
+      description: t('trendingDesc'),
+    },
     alternates: {
+      canonical,
       languages: {
         en: `${baseUrl}/trending`,
         es: `${baseUrl}/es/trending`,
@@ -69,66 +82,75 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
   const { locale } = await params;
   setRequestLocale(locale);
   const dateFmt = LOCALE_MAP[locale] ?? 'en-US';
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const localePrefix = locale === 'en' ? '' : `/${locale}`;
 
   let assets: AssetCard[] = [];
   let recentReports: RecentReport[] = [];
+  let loadError = !hasDb();
 
-  {
-    const sessions = await listPublished();
-    const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
+  if (!loadError) {
+    try {
+      const sessions = await listPublished();
+      const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
 
-    for (const s of sessions) {
-      const ak = s.assetKey as string | undefined;
-      if (!ak) continue;
+      for (const s of sessions) {
+        const ak = s.assetKey as string | undefined;
+        if (!ak) continue;
 
-      const sentiment = firstEvidenceSentiment(s.meta);
+        const sentiment = firstEvidenceSentiment(s.meta);
 
-      const existing = grouped.get(ak);
-      if (!existing) {
-        grouped.set(ak, { count: 1, latestDate: s._creationTime, latestSentiment: sentiment });
-      } else {
-        existing.count += 1;
-        if (s._creationTime > existing.latestDate) {
-          existing.latestDate = s._creationTime;
-          if (sentiment) existing.latestSentiment = sentiment;
+        const existing = grouped.get(ak);
+        if (!existing) {
+          grouped.set(ak, { count: 1, latestDate: s._creationTime, latestSentiment: sentiment });
+        } else {
+          existing.count += 1;
+          if (s._creationTime > existing.latestDate) {
+            existing.latestDate = s._creationTime;
+            if (sentiment) existing.latestSentiment = sentiment;
+          }
         }
       }
+
+      assets = Array.from(grouped.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([assetKey, data]) => ({
+          assetKey,
+          label: decodeURIComponent(assetKey).replace(/-/g, ' '),
+          count: data.count,
+          latestDate: data.latestDate,
+          latestSentiment: data.latestSentiment,
+        }));
+
+      recentReports = sessions
+        .filter((s) => s.slug)
+        .sort((a, b) => b._creationTime - a._creationTime)
+        .slice(0, 12)
+        .map((s) => {
+          const sentiment = firstEvidenceSentiment(s.meta);
+          return { slug: s.slug!, topic: s.topic, date: s._creationTime, sentiment };
+        });
+    } catch {
+      loadError = true;
     }
-
-    // Most analyzed — sorted by count descending
-    assets = Array.from(grouped.entries())
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(([assetKey, data]) => ({
-        assetKey,
-        label: decodeURIComponent(assetKey).replace(/-/g, ' '),
-        count: data.count,
-        latestDate: data.latestDate,
-        latestSentiment: data.latestSentiment,
-      }));
-
-    // Recent reports — last 12 published sessions by date
-    recentReports = sessions
-      .filter((s) => s.slug)
-      .sort((a, b) => b._creationTime - a._creationTime)
-      .slice(0, 12)
-      .map((s) => {
-        const sentiment = firstEvidenceSentiment(s.meta);
-        return { slug: s.slug!, topic: s.topic, date: s._creationTime, sentiment };
-      });
   }
 
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'ItemList',
+    '@type': 'CollectionPage',
     name: 'Trending Market Topics',
     description: 'Most analyzed market topics on TrendAnalysis.ai',
+    url: `${baseUrl}${localePrefix}/trending`,
     inLanguage: locale,
-    itemListElement: assets.slice(0, 20).map((asset, i) => ({
-      '@type': 'ListItem',
-      position: i + 1,
-      name: asset.label.charAt(0).toUpperCase() + asset.label.slice(1),
-      url: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai'}/asset/${asset.assetKey}`,
-    })),
+    mainEntity: {
+      '@type': 'ItemList',
+      itemListElement: assets.slice(0, 20).map((asset, i) => ({
+        '@type': 'ListItem',
+        position: i + 1,
+        name: asset.label.charAt(0).toUpperCase() + asset.label.slice(1),
+        url: `${baseUrl}${localePrefix}/asset/${asset.assetKey}`,
+      })),
+    },
   };
 
   return (
@@ -157,7 +179,22 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
           </Button>
         </div>
 
-        {assets.length === 0 && recentReports.length === 0 ? (
+        {loadError ? (
+          <Card className="p-12">
+            <EmptyState
+              title="Trending data is temporarily unavailable"
+              description="Published session data could not be loaded right now. You can still launch a fresh run from the terminal."
+              action={
+                <Link
+                  href="/terminal"
+                  className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
+                >
+                  Run a fresh analysis &rarr;
+                </Link>
+              }
+            />
+          </Card>
+        ) : assets.length === 0 && recentReports.length === 0 ? (
           <Card className="p-12">
             <EmptyState
               title="No published analyses yet. Be the first!"

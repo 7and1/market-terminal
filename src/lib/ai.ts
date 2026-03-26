@@ -397,7 +397,7 @@ export async function createChatCompletion({
             { role: 'system', content: system },
             { role: 'user', content: user },
           ],
-          ...(jsonObject ? { response_format: { type: 'json_object' } as any } : null),
+          ...(jsonObject ? { response_format: { type: 'json_object' } as const } : null),
         });
 
         return {

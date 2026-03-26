@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SectionLabel } from '@/components/ui/section-label';
 import { MomentumBadge } from '@/components/ui/momentum-badge';
@@ -19,6 +19,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { SiteHeader } from '@/components/layout/site-header';
 import { PageBackground } from '@/components/layout/page-background';
+import { MonitorDashboard } from '@/components/dashboard/MonitorDashboard';
+import {
+  asRecord,
+  evidenceItems,
+  getArtifacts,
+  graphEdges,
+  graphNodes,
+  storyClusters,
+  tapeItems,
+  tracePageStateFromResponse,
+  type TraceEventRow,
+  type TracePageState,
+  type TraceResponse,
+} from '@/lib/session-data';
 
 type SessionSummary = {
   id: string;
@@ -42,29 +56,8 @@ type SessionSummary = {
   mapTags?: string[];
 };
 
-type TraceEvent = {
-  id: number;
-  created_at: string;
-  type: string;
-  payload: any;
-};
-
-type SessionDetailResponse = {
-  session: {
-    id: string;
-    created_at: string;
-    topic: string;
-    status: string;
-    step: string;
-    progress: number;
-    meta: any;
-  };
-  events: TraceEvent[];
-  pageInfo?: {
-    nextCursor: string | null;
-    hasMore: boolean;
-  };
-};
+type TraceEvent = TraceEventRow;
+type SessionDetailResponse = TraceResponse;
 
 type PerfApiEntry = {
   name: string;
@@ -84,6 +77,12 @@ type PerfSummary = {
 };
 
 const PERF_STEP_ORDER = ['plan', 'search', 'scrape', 'extract', 'link', 'cluster', 'render', 'ready'] as const;
+const EMPTY_TRACE_PAGE: TracePageState = {
+  nextCursor: null,
+  hasMore: false,
+  loading: false,
+  error: null,
+};
 
 function formatTime(ts: string) {
   const d = new Date(ts);
@@ -181,17 +180,22 @@ function takeTopTags(
 }
 
 function sessionSummaryLine(ev: TraceEvent) {
-  const p = ev.payload || {};
-  if (ev.type === 'step') return `${p?.step ?? 'step'} · ${Math.round((p?.progress ?? 0) * 100)}%`;
-  if (ev.type === 'plan') return `${(p?.queries?.length ?? 0)} queries`;
+  const p = asRecord(ev.payload);
+  const queries = Array.isArray(p.queries) ? p.queries : [];
+  const results = Array.isArray(p.results) ? p.results : [];
+  const items = Array.isArray(p.items) ? p.items : [];
+  const nodes = Array.isArray(p.nodes) ? p.nodes : [];
+  const edges = Array.isArray(p.edges) ? p.edges : [];
+  if (ev.type === 'step') return `${p?.step ?? 'step'} · ${Math.round(Number(p?.progress ?? 0) * 100)}%`;
+  if (ev.type === 'plan') return `${queries.length} queries`;
   if (ev.type === 'search.partial') return `${p?.query ?? 'query'} · ${p?.found ?? 0} found`;
-  if (ev.type === 'search') return `${(p?.results?.length ?? 0)} results`;
+  if (ev.type === 'search') return `${results.length} results`;
   if (ev.type === 'scrape.page') return `${String(p?.url || 'page').slice(0, 90)}`;
-  if (ev.type === 'evidence') return `${(p?.items?.length ?? 0)} evidence`;
-  if (ev.type === 'summaries') return `${(p?.items?.length ?? 0)} summaries`;
-  if (ev.type === 'tape') return `${(p?.items?.length ?? 0)} tape items`;
-  if (ev.type === 'graph') return `${(p?.nodes?.length ?? 0)} nodes · ${(p?.edges?.length ?? 0)} edges`;
-  if (ev.type === 'clusters') return `${(p?.items?.length ?? 0)} clusters`;
+  if (ev.type === 'evidence') return `${items.length} evidence`;
+  if (ev.type === 'summaries') return `${items.length} summaries`;
+  if (ev.type === 'tape') return `${items.length} tape items`;
+  if (ev.type === 'graph') return `${nodes.length} nodes · ${edges.length} edges`;
+  if (ev.type === 'clusters') return `${items.length} clusters`;
   if (ev.type === 'perf.mark') {
     const phase = String(p?.phase || 'perf');
     const name = String(p?.name || 'mark');
@@ -206,7 +210,7 @@ function sessionSummaryLine(ev: TraceEvent) {
     const topApi = Array.isArray(p?.api) && p.api.length ? p.api[0] : null;
     const topApiLabel =
       topApi && typeof topApi === 'object'
-        ? `${String((topApi as any).name || 'api')} ${formatSeconds(Number((topApi as any).totalMs || 0))}`
+        ? `${String((topApi as Record<string, unknown>).name || 'api')} ${formatSeconds(Number((topApi as Record<string, unknown>).totalMs || 0))}`
         : null;
     return `total ${formatDuration(totalMs)} · ${stepCount} steps${topApiLabel ? ` · top ${topApiLabel}` : ''}`;
   }
@@ -251,6 +255,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export function SessionDashboard() {
   const t = useTranslations('dashboard');
   const nav = useTranslations('nav');
+  const [dashboardView, setDashboardView] = useState<'sessions' | 'monitors'>('sessions');
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -260,11 +265,23 @@ export function SessionDashboard() {
   const [detail, setDetail] = useState<SessionDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [sessionsPage, setSessionsPage] = useState<TracePageState>({
+    nextCursor: null,
+    hasMore: false,
+    loading: false,
+    error: null,
+  });
+  const [detailPage, setDetailPage] = useState<TracePageState>({
+    nextCursor: null,
+    hasMore: false,
+    loading: false,
+    error: null,
+  });
   const [tab, setTab] = useState<string>('artifacts');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const detailInFlightRef = useRef(false);
-  const SESSION_PAGE_LIMIT = 80;
-  const EVENT_PAGE_LIMIT = 500;
+  const SESSION_PAGE_LIMIT = 24;
+  const EVENT_PAGE_LIMIT = 200;
 
   useEffect(() => {
     if (!copiedKey) return;
@@ -276,34 +293,47 @@ export function SessionDashboard() {
     setLoading(true);
     setError(null);
     try {
-      let cursor: string | null = null;
-      const list: SessionSummary[] = [];
+      const qs = new URLSearchParams({ limit: String(SESSION_PAGE_LIMIT) });
+      if (query.trim()) qs.set('q', query.trim());
 
-      while (list.length < SESSION_PAGE_LIMIT) {
-        const remaining = SESSION_PAGE_LIMIT - list.length;
-        const qs = new URLSearchParams({ limit: String(Math.min(remaining, 40)) });
-        if (query.trim()) qs.set('q', query.trim());
-        if (cursor) qs.set('cursor', cursor);
+      const res = await fetch(apiPath(`/api/sessions?${qs.toString()}`), { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load sessions');
 
-        const res = await fetch(apiPath(`/api/sessions?${qs.toString()}`), { cache: 'no-store' });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json?.error || 'Failed to load sessions');
-
-        const page = (json?.sessions || []) as SessionSummary[];
-        list.push(...page);
-        cursor = typeof json?.pageInfo?.nextCursor === 'string' ? json.pageInfo.nextCursor : null;
-        if (!json?.pageInfo?.hasMore || !cursor || page.length === 0) break;
-      }
-
-      setSessions(list);
-      if (!selectedId && list.length) setSelectedId(list[0].id);
+      const page = (json?.sessions || []) as SessionSummary[];
+      setSessions(page);
+      setSessionsPage(tracePageStateFromResponse(json));
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load sessions';
       setError(msg);
     } finally {
       setLoading(false);
     }
-  }, [query, selectedId]);
+  }, [query]);
+
+  const loadMoreSessions = useCallback(async () => {
+    if (!sessionsPage.hasMore || !sessionsPage.nextCursor) return;
+    setSessionsPage((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const qs = new URLSearchParams({
+        limit: String(SESSION_PAGE_LIMIT),
+        cursor: sessionsPage.nextCursor,
+      });
+      if (query.trim()) qs.set('q', query.trim());
+      const res = await fetch(apiPath(`/api/sessions?${qs.toString()}`), { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Failed to load sessions');
+
+      const page = (json?.sessions || []) as SessionSummary[];
+      setSessions((prev) => [...prev, ...page.filter((item) => !prev.some((existing) => existing.id === item.id))]);
+      setSessionsPage(tracePageStateFromResponse(json));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to load sessions';
+      setSessionsPage((prev) => ({ ...prev, loading: false, error: msg }));
+    } finally {
+      setSessionsPage((prev) => ({ ...prev, loading: false }));
+    }
+  }, [query, sessionsPage.hasMore, sessionsPage.nextCursor]);
 
   const fetchDetail = useCallback(async (id: string) => {
     if (!id) return;
@@ -312,27 +342,13 @@ export function SessionDashboard() {
     setDetailLoading(true);
     setDetailError(null);
     try {
-      let cursor: string | null = null;
-      let sessionMeta: SessionDetailResponse['session'] | null = null;
-      const events: TraceEvent[] = [];
+      const qs = new URLSearchParams({ sessionId: id, limit: String(EVENT_PAGE_LIMIT) });
+      const res = await fetch(apiPath(`/api/sessions/events?${qs.toString()}`), { cache: 'no-store' });
+      const json = (await res.json()) as SessionDetailResponse & { error?: string };
+      if (!res.ok) throw new Error(json?.error || 'Failed to load session');
 
-      while (events.length < EVENT_PAGE_LIMIT) {
-        const remaining = EVENT_PAGE_LIMIT - events.length;
-        const qs = new URLSearchParams({ sessionId: id, limit: String(Math.min(remaining, 200)) });
-        if (cursor) qs.set('cursor', cursor);
-
-        const res = await fetch(apiPath(`/api/sessions/events?${qs.toString()}`), { cache: 'no-store' });
-        const json = (await res.json()) as SessionDetailResponse & { error?: string };
-        if (!res.ok) throw new Error(json?.error || 'Failed to load session');
-
-        sessionMeta = json.session;
-        events.push(...(json.events || []));
-        cursor = typeof json?.pageInfo?.nextCursor === 'string' ? json.pageInfo.nextCursor : null;
-        if (!json?.pageInfo?.hasMore || !cursor || (json.events || []).length === 0) break;
-      }
-
-      if (!sessionMeta) throw new Error('Failed to load session');
-      setDetail({ session: sessionMeta, events });
+      setDetail({ session: json.session, events: json.events || [] });
+      setDetailPage(tracePageStateFromResponse(json));
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load session';
       setDetailError(msg);
@@ -343,10 +359,63 @@ export function SessionDashboard() {
     }
   }, []);
 
+  const loadMoreDetail = useCallback(async () => {
+    if (!selectedId || !detailPage.hasMore || !detailPage.nextCursor) return;
+    if (detailInFlightRef.current) return;
+    detailInFlightRef.current = true;
+    setDetailPage((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const qs = new URLSearchParams({
+        sessionId: selectedId,
+        limit: String(EVENT_PAGE_LIMIT),
+        cursor: detailPage.nextCursor,
+      });
+      const res = await fetch(apiPath(`/api/sessions/events?${qs.toString()}`), { cache: 'no-store' });
+      const json = (await res.json()) as SessionDetailResponse & { error?: string };
+      if (!res.ok) throw new Error(json?.error || 'Failed to load session');
+
+      setDetail((prev) => {
+        if (!prev) return { session: json.session, events: json.events || [] };
+        const seen = new Set(prev.events.map((event) => event.id));
+        const mergedEvents = [...prev.events, ...(json.events || []).filter((event) => !seen.has(event.id))];
+        return { session: json.session, events: mergedEvents };
+      });
+      setDetailPage(tracePageStateFromResponse(json));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to load session';
+      setDetailPage((prev) => ({ ...prev, loading: false, error: msg }));
+    } finally {
+      detailInFlightRef.current = false;
+      setDetailPage((prev) => ({ ...prev, loading: false }));
+    }
+  }, [detailPage.hasMore, detailPage.nextCursor, selectedId]);
+
   useEffect(() => {
     void fetchSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!sessions.length) {
+      if (selectedId !== null) setSelectedId(null);
+      setDetail(null);
+      setDetailError(null);
+      setDetailPage(EMPTY_TRACE_PAGE);
+      return;
+    }
+
+    if (!selectedId) {
+      setSelectedId(sessions[0].id);
+      return;
+    }
+
+    if (!sessions.some((session) => session.id === selectedId)) {
+      setSelectedId(sessions[0].id);
+      setDetail(null);
+      setDetailError(null);
+      setDetailPage(EMPTY_TRACE_PAGE);
+    }
+  }, [selectedId, sessions]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -355,13 +424,16 @@ export function SessionDashboard() {
 
   const selectedSummary = useMemo(() => sessions.find((s) => s.id === selectedId) || null, [selectedId, sessions]);
 
-  const artifacts = detail?.session?.meta?.artifacts || null;
-  const evidence = Array.isArray(artifacts?.evidence) ? artifacts.evidence : [];
-  const tape = Array.isArray(artifacts?.tape) ? artifacts.tape : [];
-  const nodes = Array.isArray(artifacts?.nodes) ? artifacts.nodes : [];
-  const edges = Array.isArray(artifacts?.edges) ? artifacts.edges : [];
-  const clusters = Array.isArray(artifacts?.clusters) ? artifacts.clusters : [];
-  const videos = Array.isArray(artifacts?.videos?.items) ? artifacts.videos.items : [];
+  const artifacts = useMemo(() => getArtifacts(detail?.session?.meta), [detail?.session?.meta]);
+  const evidence = useMemo(() => evidenceItems(artifacts.evidence), [artifacts.evidence]);
+  const tape = useMemo(() => tapeItems(artifacts.tape), [artifacts.tape]);
+  const nodes = useMemo(() => graphNodes(artifacts.nodes), [artifacts.nodes]);
+  const edges = useMemo(() => graphEdges(artifacts.edges), [artifacts.edges]);
+  const clusters = useMemo(() => storyClusters(artifacts.clusters), [artifacts.clusters]);
+  const videos = useMemo(() => {
+    const items = asRecord(artifacts.videos).items;
+    return Array.isArray(items) ? items : [];
+  }, [artifacts.videos]);
 
   const perf = useMemo(() => {
     const fromMeta = normalizePerfSummary(detail?.session?.meta?.perf);
@@ -416,7 +488,7 @@ export function SessionDashboard() {
       for (const tag of tags) bumpCount(tapeTags, tag, 1);
     }
     for (const item of evidence) {
-      const aiSummary = item?.aiSummary || {};
+      const aiSummary = asRecord(item?.aiSummary);
       const summaryEntities = Array.isArray(aiSummary.entities) ? aiSummary.entities : [];
       const summaryCatalysts = Array.isArray(aiSummary.catalysts) ? aiSummary.catalysts : [];
       for (const entity of summaryEntities) bumpCount(entities, entity, 1);
@@ -459,23 +531,34 @@ export function SessionDashboard() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Tabs value={dashboardView} onValueChange={(value) => setDashboardView(value as 'sessions' | 'monitors')}>
+              <TabsList>
+                <TabsTrigger value="sessions">{t('sessions')}</TabsTrigger>
+                <TabsTrigger value="monitors">{t('monitors')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
             <Link href="/how-it-works">
               <Button variant="outline" size="sm">{nav('architecture')}</Button>
             </Link>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void fetchSessions()}
-              disabled={loading}
-            >
-              <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
-              {t('refresh')}
-            </Button>
+            {dashboardView === 'sessions' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void fetchSessions()}
+                disabled={loading}
+              >
+                <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
+                {t('refresh')}
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
 
       <main className="mx-auto max-w-[1520px] px-4 pb-14">
+        {dashboardView === 'monitors' ? (
+          <MonitorDashboard />
+        ) : (
         <div className="grid gap-5 lg:grid-cols-12">
           {/* ── Left: Session List ──────────────────────────────────── */}
           <div className="lg:col-span-4">
@@ -579,6 +662,23 @@ export function SessionDashboard() {
                           </button>
                         );
                       })}
+                      {sessionsPage.hasMore ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => void loadMoreSessions()}
+                          disabled={sessionsPage.loading}
+                        >
+                          <RefreshCw className={cn('h-4 w-4', sessionsPage.loading ? 'animate-spin' : '')} />
+                          {t('loadMore')}
+                        </Button>
+                      ) : null}
+                      {sessionsPage.error ? (
+                        <Card className="border-orange/25 bg-orange/[0.06] p-3 text-sm text-white/70">
+                          {sessionsPage.error}
+                        </Card>
+                      ) : null}
                     </div>
                   </ScrollArea>
                 )}
@@ -734,6 +834,23 @@ export function SessionDashboard() {
                                 </div>
                               );
                             })}
+                            {detailPage.hasMore ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => void loadMoreDetail()}
+                                disabled={detailPage.loading}
+                              >
+                                <RefreshCw className={cn('h-4 w-4', detailPage.loading ? 'animate-spin' : '')} />
+                                {t('loadMoreTrace')}
+                              </Button>
+                            ) : null}
+                            {detailPage.error ? (
+                              <Card className="border-orange/25 bg-orange/[0.06] p-3 text-sm text-white/70">
+                                {detailPage.error}
+                              </Card>
+                            ) : null}
                           </div>
                         </ScrollArea>
                       </Card>
@@ -844,7 +961,7 @@ export function SessionDashboard() {
                             <SectionLabel className="mb-3">{t('evidenceSample')}</SectionLabel>
                             <ScrollArea className="max-h-[320px]">
                               <div className="space-y-2 pr-2">
-                                {evidence.slice(0, 14).map((ev: any) => (
+                                {evidence.slice(0, 14).map((ev) => (
                                   <div key={ev.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
                                     <div className="flex items-start justify-between gap-3">
                                       <div className="min-w-0">
@@ -866,11 +983,11 @@ export function SessionDashboard() {
                                         {t('open')}
                                       </a>
                                     </div>
-                                    {ev.aiSummary?.bullets?.length > 0 && (
+                                    {Array.isArray(ev.aiSummary?.bullets) && ev.aiSummary.bullets.length > 0 && (
                                       <div className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
                                         <SectionLabel>{t('aiSummary')}</SectionLabel>
                                         <div className="mt-1 space-y-1 text-[13px] text-white/70">
-                                          {ev.aiSummary.bullets.slice(0, 2).map((b: string, idx: number) => (
+                                          {ev.aiSummary.bullets.slice(0, 2).map((b, idx) => (
                                             <div key={`${ev.id}_b_${idx}`} className="flex gap-2">
                                               <span className="text-white/30">-</span>
                                               <span>{b}</span>
@@ -894,7 +1011,7 @@ export function SessionDashboard() {
                               <SectionLabel className="mb-3">{t('breakingTape')}</SectionLabel>
                               <ScrollArea className="max-h-[220px]">
                                 <div className="space-y-2 pr-2">
-                                  {tape.slice(0, 10).map((tapeItem: any) => (
+                                  {tape.slice(0, 10).map((tapeItem) => (
                                     <div key={tapeItem.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="text-[13px] font-semibold text-white/85">{tapeItem.title}</div>
@@ -903,7 +1020,7 @@ export function SessionDashboard() {
                                       <div className="mt-1 text-[11px] text-white/50">{tapeItem.source}</div>
                                       {Array.isArray(tapeItem.tags) && tapeItem.tags.length > 0 && (
                                         <div className="mt-2 flex flex-wrap gap-1.5">
-                                          {tapeItem.tags.slice(0, 6).map((tag: string) => (
+                                          {tapeItem.tags.slice(0, 6).map((tag) => (
                                             <Badge key={`${tapeItem.id}_${tag}`} className="mono">{tag}</Badge>
                                           ))}
                                         </div>
@@ -921,7 +1038,7 @@ export function SessionDashboard() {
                               <SectionLabel className="mb-3">{t('narrativesSample')}</SectionLabel>
                               <ScrollArea className="max-h-[220px]">
                                 <div className="space-y-2 pr-2">
-                                  {clusters.slice(0, 6).map((c: any) => (
+                                  {clusters.slice(0, 6).map((c) => (
                                     <div key={c.id} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="text-[13px] font-semibold text-white/85">{c.title}</div>
@@ -946,6 +1063,7 @@ export function SessionDashboard() {
             </Card>
           </div>
         </div>
+        )}
       </main>
     </div>
   );

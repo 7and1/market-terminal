@@ -1,27 +1,12 @@
 'use client';
 
+import Image from 'next/image';
 import { RefreshCw, Video } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-
-type VideoItem = {
-  id: string;
-  title: string;
-  url: string;
-  channel: string;
-  thumbnail: string;
-  provider: 'YouTube';
-};
-
-type VideosResponse = {
-  topic: string;
-  fetchedAt: number;
-  mode: 'brightdata' | 'mock';
-  items: VideoItem[];
-  error?: string;
-};
+import type { VideosResponse } from '@/components/terminal/model';
 
 function extractYouTubeId(url: string): string | null {
   try {
@@ -167,12 +152,16 @@ export function MediaPanel({
                   onClick={() => onActiveVideoChange(v.id)}
                 >
                   {v.thumbnail ? (
-                    <img
-                      src={v.thumbnail}
-                      alt=""
-                      className="h-16 w-28 shrink-0 rounded-xl border border-white/10 bg-white/[0.03] object-cover"
-                      loading="lazy"
-                    />
+                    <div className="relative h-16 w-28 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
+                      <Image
+                        src={v.thumbnail}
+                        alt={`${v.title} thumbnail`}
+                        fill
+                        unoptimized
+                        className="object-cover"
+                        sizes="112px"
+                      />
+                    </div>
                   ) : (
                     <div className="grid h-16 w-28 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/10 bg-[linear-gradient(135deg,rgba(0,102,255,0.24),rgba(255,82,28,0.18),rgba(20,184,166,0.14))]">
                       <div className="mono text-xs font-semibold text-white/85">{t('video')}</div>

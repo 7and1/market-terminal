@@ -8,20 +8,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-
-type PriceScaleMode = 'price' | 'indexed';
-
-type PriceResponse = {
-  ok: boolean;
-  topic: string;
-  symbol?: string;
-  provider: string;
-  fetchedAt: number;
-  series: number[];
-  timestamps: number[];
-  last?: number | null;
-  error?: string;
-};
+import type { PriceResponse, PriceScaleMode } from '@/components/terminal/model';
 
 type EvidenceItem = {
   id: string;

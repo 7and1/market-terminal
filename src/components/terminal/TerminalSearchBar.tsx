@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
 const TOPIC_QUICK_STARTS = [
-  'Bitcoin move today',
-  'NVDA post-earnings impact',
-  'DXY and crypto correlation',
-  'Oil shock and equities',
+  'BTC drawdown today',
+  'NVDA after earnings',
+  'Yields vs growth stocks',
+  'Tariffs and industrials',
 ] as const;
 
 export function TerminalSearchBar({
@@ -47,7 +47,7 @@ export function TerminalSearchBar({
           onChange={(e) => onTopicChange(e.target.value)}
           className="h-10 flex-1 border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           placeholder={typedTopicHint || t('searchPlaceholder')}
-          aria-label="Topic prompt"
+          aria-label="Market topic prompt"
         />
         <Button
           type="submit"
@@ -61,6 +61,11 @@ export function TerminalSearchBar({
           {running ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
         </Button>
       </form>
+
+      <div className="text-[11px] leading-relaxed text-white/45">
+        Use market questions only: asset, sector, macro, or policy-driven moves. Generic queries such as weather or
+        travel are out of scope.
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">

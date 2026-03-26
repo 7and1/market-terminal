@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { listPublished } from '@/lib/db';
+import { publicToolPaths } from '@/lib/tool-catalog';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,12 +30,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const staticPages: MetadataRoute.Sitemap = [
     localizedEntry(baseUrl, '', 'daily', 1.0),
-    localizedEntry(baseUrl, '/tools', 'weekly', 0.9),
-    localizedEntry(baseUrl, '/tools/market-analyzer', 'weekly', 0.8),
-    localizedEntry(baseUrl, '/tools/evidence-graph', 'weekly', 0.8),
-    localizedEntry(baseUrl, '/tools/news-analyzer', 'weekly', 0.8),
+    localizedEntry(baseUrl, '/how-it-works', 'weekly', 0.7),
     localizedEntry(baseUrl, '/asset', 'daily', 0.8),
     localizedEntry(baseUrl, '/trending', 'daily', 0.9),
+    ...publicToolPaths.map((path) => localizedEntry(baseUrl, path, 'weekly', path === '/tools/api' ? 0.75 : 0.8)),
+    localizedEntry(baseUrl, '/tools', 'weekly', 0.9),
   ];
 
   try {

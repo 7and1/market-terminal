@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { hasDb, getSession, patchMeta, insertEventBatch } from '@/lib/db';
 import { createLogger } from '@/lib/log';
+import { isAuthorizedSnapshotWrite } from '@/lib/session-write-auth';
 import { getArtifacts } from '@/lib/session-data';
 
 export const runtime = 'nodejs';
@@ -40,6 +41,11 @@ export async function POST(request: Request) {
   }
 
   const { sessionId, price, videos } = parsed.data;
+
+  if (!isAuthorizedSnapshotWrite(request, sessionId)) {
+    log.warn('sessions.snapshot.unauthorized', { sessionId, ms: Date.now() - startedAt });
+    return NextResponse.json({ error: 'Unauthorized snapshot write' }, { status: 403 });
+  }
 
   const session = await getSession(sessionId);
   if (!session) {

@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react';
+import { Link } from '@/i18n/navigation';
 import { ToolSearchBox } from './ToolSearchBox';
 
 import { SiteHeader } from '@/components/layout/site-header';
@@ -6,9 +7,23 @@ import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
 import { PageContainer } from '@/components/layout/page-container';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/Badge';
 
 export interface ToolFeature {
   icon: ReactNode;
+  title: string;
+  description: string;
+}
+
+export interface ToolApiSurface {
+  method: 'GET' | 'POST';
+  path: string;
+  description: string;
+  example?: string;
+}
+
+export interface RelatedToolLink {
+  href: string;
   title: string;
   description: string;
 }
@@ -25,6 +40,13 @@ interface ToolPageLayoutProps {
   ctaTitle?: string;
   ctaDesc?: string;
   exampleOutputLabel?: string;
+  liveDemo?: ReactNode;
+  liveDemoTitle?: string;
+  liveDemoDesc?: string;
+  useCases?: string[];
+  apiSurface?: ToolApiSurface[];
+  relatedTools?: RelatedToolLink[];
+  showHeroSearch?: boolean;
 }
 
 export function ToolPageLayout({
@@ -38,6 +60,13 @@ export function ToolPageLayout({
   ctaTitle = 'Ready to analyze?',
   ctaDesc = 'Enter any market topic and get evidence-backed insights in seconds.',
   exampleOutputLabel = 'Example Output',
+  liveDemo,
+  liveDemoTitle = 'Live Tool',
+  liveDemoDesc = 'Run the public-facing version of this capability directly in the browser.',
+  useCases = [],
+  apiSurface = [],
+  relatedTools = [],
+  showHeroSearch = true,
 }: ToolPageLayoutProps) {
   return (
     <div className="min-h-screen flex flex-col">
@@ -61,8 +90,18 @@ export function ToolPageLayout({
             <p className="mx-auto mt-4 max-w-[660px] text-sm text-white/60 sm:text-base">
               {description}
             </p>
-            <ToolSearchBox placeholder={searchPlaceholder} />
+            {showHeroSearch ? <ToolSearchBox placeholder={searchPlaceholder} /> : null}
           </div>
+
+          {liveDemo ? (
+            <div className="mt-16">
+              <h2 className="text-center text-xl font-semibold text-white/88 sm:text-2xl">{liveDemoTitle}</h2>
+              <p className="mx-auto mt-2 max-w-[760px] text-center text-sm leading-relaxed text-white/55">
+                {liveDemoDesc}
+              </p>
+              <div className="mt-5">{liveDemo}</div>
+            </div>
+          ) : null}
 
           {/* Features */}
           <div className="mt-16 grid gap-4 sm:grid-cols-2">
@@ -79,6 +118,21 @@ export function ToolPageLayout({
             ))}
           </div>
 
+          {useCases.length > 0 && (
+            <div className="mt-16">
+              <h2 className="mb-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
+                Best-Fit Use Cases
+              </h2>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {useCases.map((item) => (
+                  <Card key={item} className="p-4 text-sm leading-relaxed text-white/68">
+                    {item}
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Example Output */}
           <div className="mt-16">
             <h2 className="mb-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
@@ -91,6 +145,48 @@ export function ToolPageLayout({
 
           {/* Stats */}
           <p className="mt-10 text-center text-xs text-white/40">{statsLine}</p>
+
+          {apiSurface.length > 0 && (
+            <div className="mt-16">
+              <h2 className="mb-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
+                API Surface
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {apiSurface.map((api) => (
+                  <Card key={`${api.method}:${api.path}`} className="p-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={api.method === 'GET' ? 'teal' : 'orange'}>{api.method}</Badge>
+                      <code className="text-sm text-white/82">{api.path}</code>
+                    </div>
+                    <p className="mt-3 text-sm leading-relaxed text-white/58">{api.description}</p>
+                    {api.example ? (
+                      <pre className="mt-4 overflow-x-auto rounded-xl border border-white/8 bg-black/25 p-3 text-xs text-white/68">
+                        <code>{api.example}</code>
+                      </pre>
+                    ) : null}
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {relatedTools.length > 0 && (
+            <div className="mt-16">
+              <h2 className="mb-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
+                Related Tools
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {relatedTools.map((tool) => (
+                  <Link key={tool.href} href={tool.href}>
+                    <Card className="h-full p-5 transition hover:border-white/20 hover:bg-white/[0.06]">
+                      <h3 className="text-sm font-semibold text-white/86">{tool.title}</h3>
+                      <p className="mt-2 text-xs leading-relaxed text-white/52">{tool.description}</p>
+                    </Card>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* CTA */}
           <div className="mt-14 text-center">

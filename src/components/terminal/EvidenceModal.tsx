@@ -14,6 +14,7 @@ import { EvidenceTimeline, type TimelineItem } from '@/components/terminal/Evide
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { EvidenceView } from '@/components/terminal/EvidenceViewToggle';
 import type { GraphEdge, GraphNode } from '@/components/terminal/types';
+import { asRecord, type PerformanceSummary, type TerminalMode, type TracePageState, type TraceResponse, type UsageSummary } from '@/lib/session-data';
 
 type EvidenceItem = {
   id: string;
@@ -33,26 +34,6 @@ type EvidenceItem = {
     sentiment?: 'bullish' | 'bearish' | 'mixed' | 'neutral';
     confidence?: number;
   };
-};
-
-type TraceEventRow = {
-  id: number;
-  created_at: string;
-  type: string;
-  payload: any;
-};
-
-type TraceResponse = {
-  session: {
-    id: string;
-    created_at: string;
-    topic: string;
-    status: string;
-    step: string;
-    progress: number;
-    meta: any;
-  };
-  events: TraceEventRow[];
 };
 
 function formatTime(ts: number): string {
@@ -322,9 +303,15 @@ export function TraceDrawer({
   trace,
   traceLoading,
   traceError,
+  tracePage,
+  traceLoadingMore,
+  terminalMode,
+  usageSummary,
+  perfSummary,
   copiedKey,
   onClose,
   onRefresh,
+  onLoadMore,
   onCopy,
 }: {
   open: boolean;
@@ -334,9 +321,15 @@ export function TraceDrawer({
   trace: TraceResponse | null;
   traceLoading: boolean;
   traceError: string | null;
+  tracePage: TracePageState;
+  traceLoadingMore: boolean;
+  terminalMode: TerminalMode;
+  usageSummary: UsageSummary;
+  perfSummary: PerformanceSummary | null;
   copiedKey: string | null;
   onClose: () => void;
   onRefresh: () => void;
+  onLoadMore: () => void;
   onCopy: (key: string) => void;
 }) {
   return (
@@ -403,25 +396,50 @@ export function TraceDrawer({
             </div>
           ) : (
             <div className="space-y-2">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Mode</div>
+                  <div className="mt-2 text-sm text-white/82">{terminalMode}</div>
+                  <div className="mt-1 text-[11px] text-white/45">{runMeta?.provider ?? 'openrouter'}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Usage</div>
+                  <div className="mt-2 text-sm text-white/82">{usageSummary.totalTokens} tok</div>
+                  <div className="mt-1 text-[11px] text-white/45">{usageSummary.latestModel || 'no ai usage yet'}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Perf</div>
+                  <div className="mt-2 text-sm text-white/82">{perfSummary ? `${(perfSummary.totalMs / 1000).toFixed(1)}s` : 'pending'}</div>
+                  <div className="mt-1 text-[11px] text-white/45">
+                    {perfSummary?.topStage ? `top ${perfSummary.topStage}` : 'summary not stored yet'}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between text-[11px] text-white/45">
                 <span>
                   Stored: <span className="mono text-white/70">{new Date(trace.session.created_at).toLocaleTimeString()}</span>
                 </span>
-                <span className="mono">{trace.events.length} events</span>
+                <span className="mono">{trace.events.length} events{tracePage.hasMore ? ' +' : ''}</span>
               </div>
               <div className="max-h-[62vh] overflow-auto rounded-2xl border border-white/10 bg-white/[0.02] p-3">
                 <div className="space-y-2">
                   {trace.events.map((ev) => {
                     const summary = (() => {
-                      const p = ev.payload;
-                      if (ev.type === 'step') return `${p?.step ?? 'step'} \u00B7 ${Math.round((p?.progress ?? 0) * 100)}%`;
-                      if (ev.type === 'plan') return `${(p?.queries?.length ?? 0)} queries`;
+                      const p = asRecord(ev.payload);
+                      const queries = Array.isArray(p.queries) ? p.queries : [];
+                      const results = Array.isArray(p.results) ? p.results : [];
+                      const items = Array.isArray(p.items) ? p.items : [];
+                      const nodes = Array.isArray(p.nodes) ? p.nodes : [];
+                      const edges = Array.isArray(p.edges) ? p.edges : [];
+                      if (ev.type === 'step') return `${p?.step ?? 'step'} \u00B7 ${Math.round(Number(p?.progress ?? 0) * 100)}%`;
+                      if (ev.type === 'plan') return `${queries.length} queries`;
                       if (ev.type === 'search.partial') return `${p?.query ?? 'query'} \u00B7 ${p?.found ?? 0} found`;
-                      if (ev.type === 'search') return `${(p?.results?.length ?? 0)} results`;
-                      if (ev.type === 'evidence') return `${(p?.items?.length ?? 0)} evidence`;
-                      if (ev.type === 'tape') return `${(p?.items?.length ?? 0)} tape items`;
-                      if (ev.type === 'graph') return `${(p?.nodes?.length ?? 0)} nodes \u00B7 ${(p?.edges?.length ?? 0)} edges`;
-                      if (ev.type === 'clusters') return `${(p?.items?.length ?? 0)} clusters`;
+                      if (ev.type === 'search') return `${results.length} results`;
+                      if (ev.type === 'evidence') return `${items.length} evidence`;
+                      if (ev.type === 'tape') return `${items.length} tape items`;
+                      if (ev.type === 'graph') return `${nodes.length} nodes \u00B7 ${edges.length} edges`;
+                      if (ev.type === 'clusters') return `${items.length} clusters`;
                       if (ev.type === 'ai.usage') {
                         const tag = String(p?.tag || 'ai');
                         const total = Number(p?.total_tokens ?? 0);
@@ -462,6 +480,24 @@ export function TraceDrawer({
                   })}
                 </div>
               </div>
+              {tracePage.hasMore ? (
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-white/12 bg-white/[0.03]"
+                    onClick={onLoadMore}
+                    disabled={traceLoadingMore}
+                  >
+                    {traceLoadingMore ? 'Loading more...' : 'Load more trace'}
+                  </Button>
+                </div>
+              ) : null}
+              {tracePage.error ? (
+                <div className="rounded-2xl border border-white/10 bg-[rgba(255,82,28,0.08)] px-4 py-3 text-xs text-white/70">
+                  {tracePage.error}
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -489,7 +525,6 @@ export function FullscreenModal({
   drawerEvidence,
   tapeTagsByEvidenceId,
   copiedKey,
-  topic,
   onClose,
   onEvidenceViewChange,
   onSelectNode,
@@ -518,7 +553,6 @@ export function FullscreenModal({
   drawerEvidence: EvidenceItem[];
   tapeTagsByEvidenceId: Map<string, string[]>;
   copiedKey: string | null;
-  topic: string;
   onClose: () => void;
   onEvidenceViewChange: (v: EvidenceView) => void;
   onSelectNode: (id: string | null) => void;

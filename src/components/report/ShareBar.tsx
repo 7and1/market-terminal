@@ -17,6 +17,7 @@ export function ShareBar({
 }) {
   const t = useTranslations('common');
   const [copied, setCopied] = useState(false);
+  const terminalHref = topic.trim() ? `/terminal?q=${encodeURIComponent(topic.trim())}` : '/terminal';
 
   const encodedUrl = encodeURIComponent(url);
   const encodedTitle = encodeURIComponent(title);
@@ -61,7 +62,7 @@ export function ShareBar({
         </div>
 
         <Button asChild>
-          <Link href="/terminal">
+          <Link href={terminalHref}>
             {t('analyze')} {topic || 'your asset'}
           </Link>
         </Button>

@@ -14,6 +14,7 @@ export async function generateMetadata({
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'metadata' });
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const canonical = `${baseUrl}${locale === 'en' ? '' : `/${locale}`}`;
 
   return {
     title: { absolute: t('homeTitle') },
@@ -30,8 +31,15 @@ export async function generateMetadata({
       title: t('homeTitle'),
       description: t('homeDesc'),
       type: 'website',
+      url: canonical,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: t('homeTitle'),
+      description: t('homeDesc'),
     },
     alternates: {
+      canonical,
       languages: {
         en: baseUrl,
         es: `${baseUrl}/es`,
@@ -49,6 +57,9 @@ export default async function HomePage({
 }) {
   const { locale } = await params;
   setRequestLocale(locale);
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const localePrefix = locale === 'en' ? '' : `/${locale}`;
+  const pageUrl = `${baseUrl}${localePrefix}`;
 
   let trendingTopics: { assetKey: string; label: string; count: number; sentiment: string | null }[] = [];
 
@@ -82,5 +93,52 @@ export default async function HomePage({
     // Non-critical — render without trending
   }
 
-  return <LandingClient trendingTopics={trendingTopics} />;
+  const structuredData = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Organization',
+      name: 'TrendAnalysis.ai',
+      url: baseUrl,
+      logo: `${baseUrl}/icon`,
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'TrendAnalysis.ai',
+      url: pageUrl,
+      description:
+        'AI-powered market research with evidence maps, knowledge graphs, trend timelines, and live public data endpoints.',
+      inLanguage: locale,
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: `${baseUrl}${localePrefix}/terminal?q={search_term_string}`,
+        'query-input': 'required name=search_term_string',
+      },
+    },
+    ...(trendingTopics.length > 0
+      ? [
+          {
+            '@context': 'https://schema.org',
+            '@type': 'ItemList',
+            name: 'Trending market topics',
+            itemListElement: trendingTopics.slice(0, 8).map((topic, index) => ({
+              '@type': 'ListItem',
+              position: index + 1,
+              name: topic.label,
+              url: `${baseUrl}${localePrefix}/asset/${topic.assetKey}`,
+            })),
+          },
+        ]
+      : []),
+  ];
+
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+      />
+      <LandingClient trendingTopics={trendingTopics} />
+    </>
+  );
 }

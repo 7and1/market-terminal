@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ActivityCard, type QueryQueueItem, type ScrapeQueueItem } from '@/components/terminal/ActivityCard';
 import type { PipelineStep, PlanEvent, SearchEvent } from '@/components/terminal/PipelineTimeline';
+import type { PerformanceSummary, ReferenceContext, TerminalMode, UsageSummary } from '@/lib/session-data';
 
 type ChatMessage = {
   id: string;
@@ -27,6 +28,13 @@ const CHAT_SUGGESTIONS = [
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function compactCount(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  return String(Math.round(n));
 }
 
 export function ChatPanel({
@@ -49,6 +57,13 @@ export function ChatPanel({
   clustersCount,
   warningsCount,
   graphVariant,
+  terminalMode,
+  usageSummary,
+  perfSummary,
+  referenceContext,
+  traceLoadedCount,
+  traceHasMore,
+  traceLoadingMore,
   mode,
   runMeta,
   onChatModeChange,
@@ -57,6 +72,8 @@ export function ChatPanel({
   onRunChat,
   onAskWithContext,
   onMentionSelect,
+  onOpenTrace,
+  onLoadMoreTrace,
   renderMessageContent,
 }: {
   session: { id: string; step: PipelineStep; progress: number; evidence: { id: string }[]; clusters: { id: string }[] } | null;
@@ -78,6 +95,13 @@ export function ChatPanel({
   clustersCount: number;
   warningsCount: number;
   graphVariant: string | null;
+  terminalMode: TerminalMode;
+  usageSummary: UsageSummary;
+  perfSummary: PerformanceSummary | null;
+  referenceContext: ReferenceContext;
+  traceLoadedCount: number;
+  traceHasMore: boolean;
+  traceLoadingMore: boolean;
   mode: 'fast' | 'deep';
   runMeta: { mode: 'fast' | 'deep'; provider: string } | null;
   onChatModeChange: (m: 'fetch' | 'explain') => void;
@@ -86,9 +110,17 @@ export function ChatPanel({
   onRunChat: (q: string) => void;
   onAskWithContext: (q: string) => void;
   onMentionSelect: (item: string) => void;
+  onOpenTrace: () => void;
+  onLoadMoreTrace: () => void;
   renderMessageContent: (content: string) => ReactNode;
 }) {
   const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+  const contextChips = [
+    ...referenceContext.nodeIds.map((id) => ({ key: `node:${id}`, label: `node:${id}` })),
+    ...referenceContext.edgeIds.map((id) => ({ key: `edge:${id}`, label: `edge:${id}` })),
+    ...referenceContext.tags.map((tag) => ({ key: `tag:${tag}`, label: `tag:${tag}` })),
+    ...referenceContext.evidenceIds.map((id) => ({ key: `ev:${id}`, label: `ev:${id}` })),
+  ].slice(0, 8);
 
   return (
     <Card className="h-full">
@@ -96,9 +128,13 @@ export function ChatPanel({
         <div className="flex items-center gap-2">
           <Search className="h-4 w-4 text-white/80" />
           <div>
-            <CardTitle>Chat</CardTitle>
+            <CardTitle>Run Console</CardTitle>
             <CardDescription>
-              {chatMode === 'fetch' ? 'Fetch mode runs a new session' : 'Explain mode uses saved session context'}
+              {terminalMode === 'replay'
+                ? 'Replay mode restores a stored session and trace.'
+                : chatMode === 'fetch'
+                  ? 'Fetch mode runs a new session.'
+                  : 'Explain mode uses the current session context.'}
             </CardDescription>
           </div>
         </div>
@@ -134,6 +170,68 @@ export function ChatPanel({
       </CardHeader>
       <CardContent className="p-5">
         <div className="flex h-[64vh] min-h-[420px] flex-col xl:h-[calc(100vh-230px)]">
+          <div className="mb-3 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Session</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-white/65">
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1">
+                  {terminalMode}
+                </span>
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1">
+                  {(runMeta?.mode ?? mode) === 'deep' ? 'deep' : 'fast'}
+                </span>
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1">
+                  {runMeta?.provider ?? 'openrouter'}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-white/55">
+                Trace loaded: <span className="mono text-white/75">{compactCount(traceLoadedCount)}</span>
+                {traceHasMore ? ' +' : ''}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" className="h-8 border-white/12 bg-white/[0.03] px-3 text-[11px]" onClick={onOpenTrace}>
+                  Open trace
+                </Button>
+                {traceHasMore ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 border-white/12 bg-white/[0.03] px-3 text-[11px]"
+                    onClick={onLoadMoreTrace}
+                    disabled={traceLoadingMore}
+                  >
+                    {traceLoadingMore ? 'Loading...' : 'Load more'}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Telemetry</div>
+              <div className="mt-2 text-xs text-white/60">
+                Tokens <span className="mono text-white/78">{compactCount(usageSummary.totalTokens)}</span>
+                {usageSummary.latestModel ? ` · ${usageSummary.latestModel}` : ''}
+              </div>
+              <div className="mt-1 text-xs text-white/60">
+                Perf{' '}
+                <span className="mono text-white/78">
+                  {perfSummary ? `${(perfSummary.totalMs / 1000).toFixed(1)}s` : 'pending'}
+                </span>
+                {perfSummary?.topStage ? ` · top ${perfSummary.topStage}` : ''}
+                {perfSummary?.topApi ? ` · api ${perfSummary.topApi}` : ''}
+              </div>
+              {usageSummary.byTag.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {usageSummary.byTag.slice(0, 3).map((entry) => (
+                    <span key={entry.tag} className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70">
+                      {entry.tag} {compactCount(entry.totalTokens)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
           {session ? (
             <div className="mb-3">
               {running || session.step !== 'ready' || warningsCount > 0 ? (
@@ -179,6 +277,19 @@ export function ChatPanel({
               ))}
             </div>
           </div>
+
+          {contextChips.length ? (
+            <div className="mt-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Context</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {contextChips.map((chip) => (
+                  <span key={chip.key} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70">
+                    {chip.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {showChatSuggestions ? (
             <div className="mt-3">

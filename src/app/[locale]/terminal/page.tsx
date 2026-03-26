@@ -1,6 +1,26 @@
+import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { setRequestLocale } from 'next-intl/server';
+import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { Terminal } from '@/components/terminal/Terminal';
+
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+  const { locale } = await params;
+  const t = await getTranslations({ locale, namespace: 'metadata' });
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const path = `${locale === 'en' ? '' : `/${locale}`}/terminal`;
+
+  return {
+    title: t('terminalTitle'),
+    description: t('terminalDesc'),
+    alternates: {
+      canonical: `${baseUrl}${path}`,
+    },
+    robots: {
+      index: false,
+      follow: false,
+    },
+  };
+}
 
 export default async function TerminalPage({
   params,

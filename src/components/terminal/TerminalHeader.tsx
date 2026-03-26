@@ -10,8 +10,7 @@ import {
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 
-import { cn, apiPath } from '@/lib/utils';
-import { Badge } from '@/components/ui/Badge';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { PipelineStep } from '@/components/terminal/PipelineTimeline';
 
@@ -33,8 +32,9 @@ export function TerminalHeader({
   running,
   session,
   publishing,
-  publishedUrl,
+  publishedReport,
   snapshotMode,
+  terminalMode,
   warnings,
   onRerun,
   onPublish,
@@ -46,8 +46,9 @@ export function TerminalHeader({
   running: boolean;
   session: { id: string; topic: string; step: PipelineStep } | null;
   publishing: boolean;
-  publishedUrl: string | null;
+  publishedReport: { fullUrl: string; relativeUrl: string; alreadyPublished: boolean } | null;
   snapshotMode: boolean;
+  terminalMode: 'draft' | 'live' | 'replay';
   warnings: string[];
   onRerun: () => void;
   onPublish: () => void;
@@ -115,7 +116,7 @@ export function TerminalHeader({
                     onClick={onPublish}
                   >
                     <Share className="h-4 w-4" />
-                    {publishedUrl ? common('copied') : publishing ? t('sharing') : common('share')}
+                    {publishedReport ? common('copied') : publishing ? t('sharing') : common('share')}
                   </Button>
                 )}
               </div>
@@ -133,6 +134,11 @@ export function TerminalHeader({
                 <div className="hidden items-center gap-2 lg:flex">
                   <div className="h-2 w-2 rounded-full bg-[var(--teal)] shadow-[0_0_0_5px_rgba(20,184,166,0.12)]" />
                   <div className="text-xs text-white/55">{t('session')}: {stepLabel}</div>
+                </div>
+                <div className="hidden items-center gap-2 lg:flex">
+                  <div className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/60">
+                    {terminalMode === 'replay' ? t('modeReplay') : terminalMode === 'live' ? t('modeLive') : t('modeDraft')}
+                  </div>
                 </div>
               </div>
 
@@ -155,6 +161,20 @@ export function TerminalHeader({
               {snapshotMode ? (
                 <div className="mt-2 text-xs text-[rgba(173,212,255,0.9)]">
                   {t('snapshotLoaded')}
+                </div>
+              ) : null}
+              {publishedReport ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[rgba(173,212,255,0.92)]">
+                  <span>
+                    {publishedReport.alreadyPublished ? t('reportReadyExisting') : t('reportReady')}
+                  </span>
+                  <a
+                    href={publishedReport.relativeUrl}
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-white/80 transition hover:bg-white/[0.08]"
+                  >
+                    {t('openReport')}
+                  </a>
+                  <span className="text-white/45">{publishedReport.fullUrl}</span>
                 </div>
               ) : null}
               {warnings.length ? (

@@ -54,7 +54,6 @@ export function createLogger(base: LogContext = {}) {
         ...base,
         ...fields,
       };
-      // eslint-disable-next-line no-console
       console[level === 'debug' ? 'log' : level](safeJson(payload));
     };
 
@@ -65,4 +64,3 @@ export function createLogger(base: LogContext = {}) {
     error: log('error'),
   };
 }
-

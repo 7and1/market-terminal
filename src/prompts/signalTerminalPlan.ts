@@ -8,6 +8,7 @@ export function buildSignalTerminalPlanPrompt({
   const system = [
     'You are a market research planner for active traders.',
     'Goal: produce high-signal search queries to explain the current move and its most likely drivers.',
+    'The topic must stay inside market research: assets, sectors, macro themes, policy, or market-moving events.',
     'Return strict JSON only.',
   ].join('\n');
 
@@ -47,6 +48,7 @@ export function buildSignalTerminalPlanPrompt({
     '- Include at least 1 query for direct catalyst confirmation.',
     '- Include at least 1 query for macro regime linkage (rates/yields/USD or equivalent).',
     '- Include at least 1 query for spillovers/second-order impacts ("spillover", "knock-on", "risk-on/risk-off").',
+    '- Include at least 1 query prefixed with "latest news" or "breaking" to capture recent news developments (e.g., "latest news <topic> today").',
   ].join('\n');
 
   return { system, user };

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Link } from '@/i18n/navigation';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { listPublished } from '@/lib/db';
+import { hasDb, listPublished } from '@/lib/db';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
@@ -18,11 +18,31 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'metadata' });
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const canonical = `${baseUrl}${locale === 'en' ? '' : `/${locale}`}/asset`;
 
   return {
     title: t('assetIndexTitle'),
     description: t('assetIndexDesc'),
+    keywords: [
+      'asset analysis index',
+      'market research archive',
+      'trend analysis reports',
+      'published market analyses',
+      'asset sentiment history',
+    ],
+    openGraph: {
+      title: t('assetIndexTitle'),
+      description: t('assetIndexDesc'),
+      type: 'website',
+      url: canonical,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: t('assetIndexTitle'),
+      description: t('assetIndexDesc'),
+    },
     alternates: {
+      canonical,
       languages: {
         en: `${baseUrl}/asset`,
         es: `${baseUrl}/es/asset`,
@@ -46,41 +66,81 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
   const { locale } = await params;
   setRequestLocale(locale);
   const dateFmt = LOCALE_MAP[locale] ?? 'en-US';
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const localePrefix = locale === 'en' ? '' : `/${locale}`;
 
-  const sessions = await listPublished();
-  const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
+  let assets: Array<{
+    assetKey: string;
+    label: string;
+    count: number;
+    latestDate: number;
+    latestSentiment: string | null;
+  }> = [];
+  let loadError = !hasDb();
 
-  for (const s of sessions) {
-    const ak = s.assetKey as string | undefined;
-    if (!ak) continue;
+  if (!loadError) {
+    try {
+      const sessions = await listPublished();
+      const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
 
-    const existing = grouped.get(ak);
-    if (!existing) {
-      const sentiment = firstEvidenceSentiment(s.meta);
-      grouped.set(ak, { count: 1, latestDate: s._creationTime, latestSentiment: sentiment });
-    } else {
-      existing.count += 1;
-      if (s._creationTime > existing.latestDate) {
-        existing.latestDate = s._creationTime;
-        existing.latestSentiment = firstEvidenceSentiment(s.meta);
+      for (const s of sessions) {
+        const ak = s.assetKey as string | undefined;
+        if (!ak) continue;
+
+        const existing = grouped.get(ak);
+        if (!existing) {
+          const sentiment = firstEvidenceSentiment(s.meta);
+          grouped.set(ak, { count: 1, latestDate: s._creationTime, latestSentiment: sentiment });
+        } else {
+          existing.count += 1;
+          if (s._creationTime > existing.latestDate) {
+            existing.latestDate = s._creationTime;
+            existing.latestSentiment = firstEvidenceSentiment(s.meta);
+          }
+        }
       }
+
+      assets = Array.from(grouped.entries())
+        .sort((a, b) => b[1].latestDate - a[1].latestDate)
+        .map(([assetKey, data]) => ({
+          assetKey,
+          label: decodeURIComponent(assetKey).replace(/-/g, ' '),
+          count: data.count,
+          latestDate: data.latestDate,
+          latestSentiment: data.latestSentiment,
+        }));
+    } catch {
+      loadError = true;
     }
   }
 
-  const assets = Array.from(grouped.entries())
-    .sort((a, b) => b[1].latestDate - a[1].latestDate)
-    .map(([assetKey, data]) => ({
-      assetKey,
-      label: decodeURIComponent(assetKey).replace(/-/g, ' '),
-      count: data.count,
-      latestDate: data.latestDate,
-      latestSentiment: data.latestSentiment,
-    }));
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: 'Asset Analysis Index',
+    description: 'Published asset-level analysis pages on TrendAnalysis.ai.',
+    url: `${baseUrl}${localePrefix}/asset`,
+    inLanguage: locale,
+    mainEntity: {
+      '@type': 'ItemList',
+      itemListElement: assets.slice(0, 24).map((asset, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        name: asset.label.charAt(0).toUpperCase() + asset.label.slice(1),
+        url: `${baseUrl}${localePrefix}/asset/${asset.assetKey}`,
+      })),
+    },
+  };
 
   return (
     <div className="min-h-screen">
       <PageBackground />
       <SiteHeader />
+
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
 
       <PageContainer className="py-10">
         {/* Header */}
@@ -98,7 +158,22 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
           </Button>
         </div>
 
-        {assets.length === 0 ? (
+        {loadError ? (
+          <Card className="p-12">
+            <EmptyState
+              title="Asset index is temporarily unavailable"
+              description="We could not load the published asset catalog right now. You can still open the terminal and run a fresh topic."
+              action={
+                <Link
+                  href="/terminal"
+                  className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
+                >
+                  Run a fresh analysis &rarr;
+                </Link>
+              }
+            />
+          </Card>
+        ) : assets.length === 0 ? (
           <Card className="p-12">
             <EmptyState
               title="No published analyses yet"

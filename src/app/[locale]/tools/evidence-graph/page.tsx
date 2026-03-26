@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import { GitBranch, Boxes, Workflow, Zap } from 'lucide-react';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
 import { ToolPageLayout } from '@/components/tools/ToolPageLayout';
+import { getRelatedTools } from '@/lib/tool-catalog';
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
   const t = await getTranslations({ locale, namespace: 'metadata' });
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const canonical = `${baseUrl}${locale === 'en' ? '' : `/${locale}`}/tools/evidence-graph`;
 
   return {
     title: t('evidenceGraphTitle'),
@@ -18,7 +20,19 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
       'asset relationship graph',
       'market network analysis',
     ],
+    openGraph: {
+      title: t('evidenceGraphTitle'),
+      description: t('evidenceGraphDesc'),
+      type: 'website',
+      url: canonical,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: t('evidenceGraphTitle'),
+      description: t('evidenceGraphDesc'),
+    },
     alternates: {
+      canonical,
       languages: {
         en: `${baseUrl}/tools/evidence-graph`,
         es: `${baseUrl}/es/tools/evidence-graph`,
@@ -108,6 +122,13 @@ function ExampleOutput() {
 export default async function EvidenceGraphPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
+  const relatedTools = getRelatedTools('evidence-graph', 'research')
+    .slice(0, 3)
+    .map((tool) => ({
+      href: tool.href,
+      title: tool.title,
+      description: tool.description,
+    }));
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -118,6 +139,12 @@ export default async function EvidenceGraphPage({ params }: { params: Promise<{ 
     applicationCategory: 'FinanceApplication',
     operatingSystem: 'Web',
     inLanguage: locale,
+    featureList: [
+      'Typed graph nodes',
+      'Confidence-scored edges',
+      'Cross-asset impact detection',
+      'Evidence-linked relationships',
+    ],
     offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   };
 
@@ -127,9 +154,31 @@ export default async function EvidenceGraphPage({ params }: { params: Promise<{ 
       description="Visualize how assets, events, entities, and sources connect. Build interactive knowledge graphs from live market data with confidence-scored relationships."
       keywords={['market evidence graph', 'news impact visualization']}
       features={features}
+      useCases={[
+        'Show how one catalyst propagates across assets, entities, and source narratives.',
+        'Turn raw evidence into a board-ready graph view for research, sales, or partner demos.',
+        'Expose the graph-building layer as a product capability instead of hiding it inside the terminal UI.',
+      ]}
       searchPlaceholder="e.g. crypto market correlations, tech sector earnings..."
       exampleOutput={<ExampleOutput />}
       statsLine="Generates up to 24 nodes and 36 edges per analysis with 4 relationship types."
+      apiSurface={[
+        {
+          method: 'POST',
+          path: '/api/run',
+          description:
+            'Runs the full graph-producing workflow and persists the artifacts needed for graph, mind map, flow, and timeline views.',
+          example: 'POST /api/run { "topic": "crypto market correlations", "mode": "deep" }',
+        },
+        {
+          method: 'GET',
+          path: '/api/serp',
+          description:
+            'Use the read-only search layer to inspect the upstream evidence pool before converting it into graph nodes and relationships.',
+          example: 'GET /api/serp?q=tech%20sector%20earnings&vertical=news&recency=w',
+        },
+      ]}
+      relatedTools={relatedTools}
       jsonLd={jsonLd}
     />
   );

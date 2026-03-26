@@ -60,11 +60,16 @@ export type EvidenceItemsWithScrapeMeta = EvidenceItem[] & {
 };
 
 export const RunRequestSchema = z.object({
-  topic: z.string().min(1),
-  question: z.string().optional(),
+  topic: z.string().trim().min(1),
+  question: z.string().trim().optional(),
   mode: z.enum(['fast', 'deep']).optional().default('fast'),
   serpFormat: z.enum(['light', 'full', 'markdown']).optional(),
   provider: z.enum(['openrouter']).optional(),
   model: z.string().optional(),
   apiKey: z.string().optional(),
+  runIntent: z.enum(['general', 'monitor']).optional().default('general'),
+  monitorId: z.string().uuid().optional(),
+  monitorRunId: z.string().uuid().optional(),
 });
+
+export type RunRequest = z.infer<typeof RunRequestSchema>;

@@ -281,14 +281,6 @@ export function PipelineTimeline({
         <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
           {stages.map((s) => {
             const Icon = s.icon;
-            const classes =
-              s.status === 'active'
-                ? 'border-white/18 bg-white/[0.08] text-white/85 shadow-[0_0_0_4px_rgba(255,255,255,0.03)]'
-                : s.status === 'done'
-                  ? 'border-white/14 bg-white/[0.05] text-white/70'
-                  : s.status === 'skipped'
-                    ? 'border-dashed border-white/10 bg-transparent text-white/40'
-                    : 'border-white/10 bg-white/[0.02] text-white/45';
             return (
               <Badge
                 key={s.key}

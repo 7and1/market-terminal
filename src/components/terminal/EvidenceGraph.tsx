@@ -4,8 +4,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import type { ForceGraphMethods, LinkObject, NodeObject } from 'react-force-graph-2d';
-import { forceCollide } from 'd3-force-3d';
-import * as d3Force from 'd3-force-3d';
+import { forceCollide, forceRadial, type ForceFn } from 'd3-force-3d';
 
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
@@ -17,6 +16,26 @@ const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false 
 
 type GraphNodeDatum = NodeObject<GraphNode>;
 type GraphLinkDatum = LinkObject<GraphNode, GraphEdge>;
+type ForceGraphRuntime = ForceGraphMethods<GraphNode, GraphEdge> & {
+  d3Force: (name: string, force?: unknown) => unknown;
+  d3ReheatSimulation: () => void;
+  d3VelocityDecay?: (value: number) => void;
+};
+type LinkForce = ForceFn & {
+  distance?: (value: number | ((link: GraphLinkDatum) => number)) => LinkForce;
+  strength?: (value: number | ((link: GraphLinkDatum) => number)) => LinkForce;
+};
+type ChargeForce = ForceFn & {
+  strength?: (value: number | ((node: GraphNodeDatum) => number)) => ChargeForce;
+  distanceMin?: (value: number) => ChargeForce;
+  distanceMax?: (value: number) => ChargeForce;
+};
+
+function nodeTypeFromLinkEnd(value: unknown): NodeType | null {
+  if (!value || typeof value !== 'object') return null;
+  const node = value as Partial<GraphNode>;
+  return typeof node.type === 'string' ? (node.type as NodeType) : null;
+}
 
 function stable01(seed: string) {
   let h = 2166136261;
@@ -204,29 +223,27 @@ export function EvidenceGraph({
 
   useEffect(() => {
     if (!nodes.length) return;
-    const g = graphRef.current;
+    const g = graphRef.current as ForceGraphRuntime | undefined;
     if (!g) return;
 
-    const collide = forceCollide((n) => collisionRadius(n as GraphNode));
-    if (typeof (collide as any).iterations === 'function') (collide as any).iterations(15);
-    g.d3Force('collide', collide as any);
+    const collide = forceCollide((n) => collisionRadius(n as GraphNode)) as ForceFn;
+    if (typeof collide.iterations === 'function') collide.iterations(15);
+    g.d3Force('collide', collide);
 
-    const fr = (d3Force as any).forceRadial(
-      (n: GraphNodeDatum) => radialFor((n as unknown as GraphNode).type, size.w, size.h),
+    const fr = forceRadial(
+      (n) => radialFor((n as unknown as GraphNode).type, size.w, size.h),
       0,
       0,
-    );
-    if (typeof (fr as any).strength === 'function') (fr as any).strength(0.22);
-    g.d3Force('radial', fr as any);
+    ) as ForceFn;
+    if (typeof fr.strength === 'function') fr.strength(0.22);
+    g.d3Force('radial', fr);
 
-    const link = g.d3Force('link') as any;
+    const link = g.d3Force('link') as LinkForce | undefined;
     if (link && typeof link.distance === 'function') {
       link.distance((l: GraphLinkDatum) => {
-        const t = (l as any).type as GraphEdge['type'] | undefined;
-        const s = (l as any).source;
-        const t0 = (l as any).target;
-        const st = typeof s === 'object' && s ? (s as any).type : null;
-        const tt = typeof t0 === 'object' && t0 ? (t0 as any).type : null;
+        const t = l.type as GraphEdge['type'] | undefined;
+        const st = nodeTypeFromLinkEnd(l.source);
+        const tt = nodeTypeFromLinkEnd(l.target);
 
         const isSourceEvent = (st === 'source' && tt === 'event') || (st === 'event' && tt === 'source');
         const isEventAsset = (st === 'event' && tt === 'asset') || (st === 'asset' && tt === 'event');
@@ -246,15 +263,15 @@ export function EvidenceGraph({
     }
     if (link && typeof link.strength === 'function') {
       link.strength((l: GraphLinkDatum) => {
-        const conf = Number((l as any).confidence ?? 0.5);
+        const conf = Number(l.confidence ?? 0.5);
         return Math.max(0.06, Math.min(0.2, 0.08 + conf * 0.12));
       });
     }
 
-    const charge = g.d3Force('charge') as any;
+    const charge = g.d3Force('charge') as ChargeForce | undefined;
     if (charge && typeof charge.strength === 'function') {
       charge.strength((n: GraphNodeDatum) => {
-        const type = (n as any)?.type as NodeType | undefined;
+        const type = n.type as NodeType | undefined;
         if (type === 'asset') return -240;
         if (type === 'event') return -360;
         if (type === 'media') return -300;
@@ -266,7 +283,7 @@ export function EvidenceGraph({
     if (charge && typeof charge.distanceMax === 'function') charge.distanceMax(620);
 
     // Slightly higher decay helps the layout settle quickly while keeping separation.
-    if (typeof (g as any).d3VelocityDecay === 'function') (g as any).d3VelocityDecay(0.34);
+    if (typeof g.d3VelocityDecay === 'function') g.d3VelocityDecay(0.34);
 
     g.d3ReheatSimulation();
   }, [edges.length, nodes.length, size.h, size.w]);
@@ -274,7 +291,7 @@ export function EvidenceGraph({
   useEffect(() => {
     // Clear selection if it becomes hidden by filters.
     const visibleNodeIds = new Set(graphData.nodes.map((n) => String(n.id)));
-    const visibleEdgeIds = new Set(graphData.links.map((l) => String((l as any).id)));
+    const visibleEdgeIds = new Set(graphData.links.map((l) => String(l.id)));
     if (selected.nodeId && !visibleNodeIds.has(selected.nodeId)) onSelectNode(null);
     if (selected.edgeId && !visibleEdgeIds.has(selected.edgeId)) onSelectEdge(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps

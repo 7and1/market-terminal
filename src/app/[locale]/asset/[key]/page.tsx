@@ -2,13 +2,14 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { Link } from '@/i18n/navigation';
 import { setRequestLocale } from 'next-intl/server';
-import { listByAsset } from '@/lib/db';
+import { hasDb, listByAsset } from '@/lib/db';
 import { aggregateAssetData } from '@/lib/asset-aggregation';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
 import { PageContainer } from '@/components/layout/page-container';
 import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { SectionLabel } from '@/components/ui/section-label';
 import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { MomentumBadge } from '@/components/ui/momentum-badge';
@@ -21,14 +22,35 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { locale, key } = await params;
   setRequestLocale(locale);
   const label = decodeURIComponent(key).replace(/-/g, ' ');
-  const title = `${label.charAt(0).toUpperCase() + label.slice(1)} Trend Analysis & History`;
+  const assetName = `${label.charAt(0).toUpperCase() + label.slice(1)}`;
+  const title = `${assetName} Trend Analysis & History`;
+  const description = `Live trend analysis, sentiment trends, catalyst history, and published research snapshots for ${label}.`;
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const canonical = `${baseUrl}${locale === 'en' ? '' : `/${locale}`}/asset/${key}`;
 
   return {
     title,
-    description: `Live trend analysis, sentiment trends and analysis history for ${label}.`,
-    openGraph: { title },
+    description,
+    keywords: [
+      `${assetName} trend analysis`,
+      `${assetName} sentiment`,
+      `${assetName} catalysts`,
+      `${assetName} market research`,
+      `${assetName} analysis history`,
+    ],
+    openGraph: {
+      title,
+      description,
+      type: 'article',
+      url: canonical,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+    },
     alternates: {
+      canonical,
       languages: {
         en: `${baseUrl}/asset/${key}`,
         es: `${baseUrl}/es/asset/${key}`,
@@ -52,23 +74,92 @@ export default async function AssetPage({ params }: Props) {
   const { locale, key } = await params;
   setRequestLocale(locale);
   const dateFmt = LOCALE_MAP[locale] ?? 'en-US';
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const localePrefix = locale === 'en' ? '' : `/${locale}`;
+  const pageUrl = `${baseUrl}${localePrefix}/asset/${key}`;
+  const label = decodeURIComponent(key).replace(/-/g, ' ');
+  const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
 
-  const sessions = await listByAsset(key);
+  if (!hasDb()) {
+    return (
+      <div className="min-h-screen">
+        <PageBackground />
+        <SiteHeader />
+        <PageContainer size="narrow" className="py-10">
+          <Link
+            href="/asset"
+            className="mb-6 inline-flex items-center gap-1.5 text-xs text-white/50 transition hover:text-white/80"
+          >
+            &larr; All assets
+          </Link>
+          <Card className="p-12">
+            <EmptyState
+              title={`${capitalizedLabel} is temporarily unavailable`}
+              description="We could not load the published history for this asset right now. You can still start a fresh run from the terminal."
+              action={
+                <Link
+                  href={`/terminal?q=${encodeURIComponent(label)}`}
+                  className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
+                >
+                  Run a fresh analysis &rarr;
+                </Link>
+              }
+            />
+          </Card>
+        </PageContainer>
+        <SiteFooter />
+      </div>
+    );
+  }
+
+  const sessions = await listByAsset(key).catch(() => null);
+  if (sessions === null) {
+    return (
+      <div className="min-h-screen">
+        <PageBackground />
+        <SiteHeader />
+        <PageContainer size="narrow" className="py-10">
+          <Link
+            href="/asset"
+            className="mb-6 inline-flex items-center gap-1.5 text-xs text-white/50 transition hover:text-white/80"
+          >
+            &larr; All assets
+          </Link>
+          <Card className="p-12">
+            <EmptyState
+              title={`${capitalizedLabel} is temporarily unavailable`}
+              description="Published reports for this asset could not be loaded right now. Try again shortly or open the terminal for a fresh run."
+              action={
+                <Link
+                  href={`/terminal?q=${encodeURIComponent(label)}`}
+                  className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
+                >
+                  Run latest analysis &rarr;
+                </Link>
+              }
+            />
+          </Card>
+        </PageContainer>
+        <SiteFooter />
+      </div>
+    );
+  }
   if (!sessions || sessions.length === 0) notFound();
+
+  const latestPublishedSession = sessions.find((session) => typeof session.slug === 'string' && session.slug);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const agg = aggregateAssetData(sessions as any[], key);
-  const label = decodeURIComponent(key).replace(/-/g, ' ');
-  const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Dataset',
     name: `${capitalizedLabel} Market Analysis`,
     description: `Aggregated trend analysis, sentiment trends and analysis for ${label}.`,
+    url: pageUrl,
     inLanguage: locale,
     creator: { '@type': 'Organization', name: 'TrendAnalysis.ai' },
-    distribution: [{ '@type': 'DataDownload', contentUrl: `https://trendanalysis.ai/asset/${key}` }],
+    distribution: [{ '@type': 'DataDownload', contentUrl: pageUrl }],
   };
 
   return (
@@ -191,12 +282,19 @@ export default async function AssetPage({ params }: Props) {
         )}
 
         {/* CTA */}
-        <div className="mt-8 text-center">
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button size="lg" asChild>
             <Link href={`/terminal?q=${encodeURIComponent(label)}`}>
               Run latest analysis &rarr;
             </Link>
           </Button>
+          {latestPublishedSession?.sessionId ? (
+            <Button size="lg" variant="outline" asChild>
+              <Link href={`/terminal?sessionId=${encodeURIComponent(latestPublishedSession.sessionId)}`}>
+                Open latest snapshot &rarr;
+              </Link>
+            </Button>
+          ) : null}
         </div>
       </PageContainer>
 

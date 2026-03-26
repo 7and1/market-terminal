@@ -100,6 +100,39 @@ describe('/api/run POST', () => {
     expect(await response.text()).toContain('Invalid request body');
   });
 
+  it('returns 422 for clearly off-domain queries', async () => {
+    const { POST } = await import('@/app/api/run/route');
+    const response = await POST(
+      new Request('http://localhost/api/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ topic: 'What is the weather tomorrow in New York?' }),
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'Off-domain query',
+      code: 'OFF_DOMAIN_QUERY',
+      scope: 'market-only',
+    });
+  });
+
+  it('keeps market-adjacent weather impact queries eligible for the pipeline', async () => {
+    process.env.DATABASE_URL = 'postgres://snapshot:test@localhost:5432/app';
+    const { POST } = await import('@/app/api/run/route');
+    const response = await POST(
+      new Request('http://localhost/api/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ topic: 'Will tomorrow weather affect natural gas prices?', mode: 'fast' }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('set-cookie')).toContain('mt_snapshot_');
+  });
+
   it('emits a fallback-ready SSE run when providers are unavailable', async () => {
     const { POST } = await import('@/app/api/run/route');
     const response = await POST(

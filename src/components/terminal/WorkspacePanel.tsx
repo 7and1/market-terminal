@@ -1,14 +1,21 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import { Maximize2, Network } from 'lucide-react';
+import { useCallback } from 'react';
+import { Download, Maximize2, Network } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LoadRipple } from '@/components/ui/load-ripple';
+import { exportGraphPng, exportEvidenceCsv, exportEvidenceJson } from '@/lib/export';
 import { EvidenceGraph } from '@/components/terminal/EvidenceGraph';
 import { EvidenceFlow } from '@/components/terminal/EvidenceFlow';
 import { EvidenceMindMap } from '@/components/terminal/EvidenceMindMap';
@@ -101,7 +108,10 @@ export function WorkspacePanel({
   const t = useTranslations('workspace');
   return (
     <Card className="lg:min-h-[68vh]">
-      <CardHeader className="flex-row items-start justify-between gap-3 border-b border-white/[0.08]">
+      <CardHeader
+        data-graph-fullscreen={graphFullscreen ? '1' : '0'}
+        className="flex-row items-start justify-between gap-3 border-b border-white/[0.08]"
+      >
         <div className="flex items-center gap-2">
           <Network className="h-4 w-4 text-white/80" />
           <div>

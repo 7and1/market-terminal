@@ -33,3 +33,44 @@ CREATE TABLE IF NOT EXISTS market_signal.session_events (
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON market_signal.session_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_session_id ON market_signal.session_events(session_id, id ASC);
+
+CREATE TABLE IF NOT EXISTS market_signal.monitors (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                TEXT NOT NULL,
+  topic               TEXT NOT NULL,
+  mode                TEXT NOT NULL DEFAULT 'deep',
+  run_intent          TEXT NOT NULL DEFAULT 'monitor',
+  cadence_minutes     INT NOT NULL,
+  active              BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_webhook_url  TEXT,
+  last_run_at         TIMESTAMPTZ,
+  last_ready_session_id TEXT,
+  last_change_score   INT,
+  last_alert_at       TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT chk_monitors_mode CHECK (mode IN ('fast', 'deep')),
+  CONSTRAINT chk_monitors_run_intent CHECK (run_intent IN ('monitor', 'general')),
+  CONSTRAINT chk_monitors_cadence CHECK (cadence_minutes IN (15, 60, 360, 1440))
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitors_active_last_run ON market_signal.monitors(active, last_run_at);
+
+CREATE TABLE IF NOT EXISTS market_signal.monitor_runs (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  monitor_id        UUID NOT NULL REFERENCES market_signal.monitors(id) ON DELETE CASCADE,
+  session_id        TEXT UNIQUE,
+  baseline_session_id TEXT,
+  status            TEXT NOT NULL,
+  change_score      INT,
+  significant       BOOLEAN,
+  summary           JSONB NOT NULL DEFAULT '{}',
+  error             TEXT,
+  started_at        TIMESTAMPTZ,
+  finished_at       TIMESTAMPTZ,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT chk_monitor_runs_status CHECK (status IN ('queued', 'running', 'ready', 'error', 'noop'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_created ON market_signal.monitor_runs(monitor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitor_runs_status_created ON market_signal.monitor_runs(status, created_at DESC);

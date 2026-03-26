@@ -6,7 +6,12 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/api/', '/terminal', '/dashboard'],
+        disallow: [
+          '/api/chat',
+          '/api/run',
+          '/api/sessions',
+          '/api/monitors',
+        ],
       },
     ],
     sitemap: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai'}/sitemap.xml`,
