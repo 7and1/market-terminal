@@ -20,12 +20,12 @@ export async function generateMetadata({
     title: { absolute: t('homeTitle') },
     description: t('homeDesc'),
     keywords: [
-      'trend analysis',
-      'trendanalysis.ai',
-      'AI market research',
+      'market explanation',
+      'asset analysis',
+      'market reports',
       'evidence-based market research',
-      'knowledge graph',
-      'market trend analyzer',
+      'market catalysts',
+      'asset hub',
     ],
     openGraph: {
       title: t('homeTitle'),
@@ -107,7 +107,7 @@ export default async function HomePage({
       name: 'TrendAnalysis.ai',
       url: pageUrl,
       description:
-        'AI-powered market research with evidence maps, knowledge graphs, trend timelines, and live public data endpoints.',
+        'Evidence-first market explanations with asset hubs, published reports, recurring catalysts, and live supporting data.',
       inLanguage: locale,
       potentialAction: {
         '@type': 'SearchAction',

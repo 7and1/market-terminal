@@ -138,8 +138,8 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: 'Trending Market Topics',
-    description: 'Most analyzed market topics on TrendAnalysis.ai',
+    name: 'Fresh Market Reports',
+    description: 'Latest published market explanations on TrendAnalysis.ai',
     url: `${baseUrl}${localePrefix}/trending`,
     inLanguage: locale,
     mainEntity: {
@@ -167,14 +167,14 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">Trending Topics</h1>
+            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">Fresh Market Reports</h1>
             <p className="mt-1 text-sm text-white/50">
-              Discover what markets are being analyzed right now
+              Start with the newest published explanations, then pivot into the underlying asset hubs.
             </p>
           </div>
           <Button asChild>
-            <Link href="/terminal">
-              Run your own analysis &rarr;
+            <Link href="/asset">
+              Browse asset hubs &rarr;
             </Link>
           </Button>
         </div>
@@ -183,13 +183,13 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
           <Card className="p-12">
             <EmptyState
               title="Trending data is temporarily unavailable"
-              description="Published session data could not be loaded right now. You can still launch a fresh run from the terminal."
+              description="Published reports could not be loaded right now. You can still browse asset hubs or launch a deeper run from the terminal."
               action={
                 <Link
-                  href="/terminal"
+                  href="/asset"
                   className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
                 >
-                  Run a fresh analysis &rarr;
+                  Browse asset hubs &rarr;
                 </Link>
               }
             />
@@ -213,7 +213,7 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
             {/* Most Analyzed Section */}
             {assets.length > 0 && (
               <section className="mb-10">
-                <SectionLabel className="mb-4 text-lg font-semibold text-white/80 normal-case tracking-normal">Most Analyzed</SectionLabel>
+                <SectionLabel className="mb-4 text-lg font-semibold text-white/80 normal-case tracking-normal">Active Asset Hubs</SectionLabel>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {assets.map((asset) => (
                     <Link
@@ -245,7 +245,7 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
             {/* Recent Analyses Section */}
             {recentReports.length > 0 && (
               <section>
-                <SectionLabel className="mb-4 text-lg font-semibold text-white/80 normal-case tracking-normal">Recent Analyses</SectionLabel>
+                <SectionLabel className="mb-4 text-lg font-semibold text-white/80 normal-case tracking-normal">Fresh Reports</SectionLabel>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {recentReports.map((report) => (
                     <Link

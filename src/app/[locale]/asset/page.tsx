@@ -117,8 +117,8 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: 'Asset Analysis Index',
-    description: 'Published asset-level analysis pages on TrendAnalysis.ai.',
+    name: 'Market Asset Hubs',
+    description: 'Published market asset hubs on TrendAnalysis.ai.',
     url: `${baseUrl}${localePrefix}/asset`,
     inLanguage: locale,
     mainEntity: {
@@ -146,14 +146,14 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">Asset Analysis Index</h1>
+            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">Market Asset Hubs</h1>
             <p className="mt-1 text-sm text-white/50">
-              {assets.length} {assets.length === 1 ? 'asset' : 'assets'} tracked
+              Start from a tracked asset hub to follow published reports, recurring catalysts, and the latest sentiment shift.
             </p>
           </div>
           <Button asChild>
-            <Link href="/terminal">
-              Analyze a new asset &rarr;
+            <Link href="/trending">
+              Read fresh market reports &rarr;
             </Link>
           </Button>
         </div>
@@ -162,13 +162,13 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
           <Card className="p-12">
             <EmptyState
               title="Asset index is temporarily unavailable"
-              description="We could not load the published asset catalog right now. You can still open the terminal and run a fresh topic."
+              description="We could not load the published asset hubs right now. You can still browse fresh market reports or open the terminal for a deeper run."
               action={
                 <Link
-                  href="/terminal"
+                  href="/trending"
                   className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
                 >
-                  Run a fresh analysis &rarr;
+                  Read fresh reports &rarr;
                 </Link>
               }
             />
@@ -179,10 +179,10 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
               title="No published analyses yet"
               action={
                 <Link
-                  href="/terminal"
+                  href="/trending"
                   className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
                 >
-                  Run your first analysis &rarr;
+                  Check recent publishing activity &rarr;
                 </Link>
               }
             />

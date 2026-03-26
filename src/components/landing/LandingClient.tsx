@@ -210,6 +210,53 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
               ) : null}
             </div>
 
+            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              <Card className="p-4 text-left">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
+                  {t('hubAssetsTitle')}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-white/56">
+                  {t('hubAssetsDesc')}
+                </p>
+                <Link
+                  href="/asset"
+                  className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--blue)] transition hover:text-white/82"
+                >
+                  {t('hubAssetsCta')} <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </Card>
+
+              <Card className="p-4 text-left">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
+                  {t('hubReportsTitle')}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-white/56">
+                  {t('hubReportsDesc')}
+                </p>
+                <Link
+                  href="/trending"
+                  className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--blue)] transition hover:text-white/82"
+                >
+                  {t('hubReportsCta')} <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </Card>
+
+              <Card className="p-4 text-left">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
+                  {t('hubToolsTitle')}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-white/56">
+                  {t('hubToolsDesc')}
+                </p>
+                <Link
+                  href="/tools"
+                  className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--blue)] transition hover:text-white/82"
+                >
+                  {t('hubToolsCta')} <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </Card>
+            </div>
+
             {/* Trending Section */}
             {trendingTopics.length > 0 && (
               <div className="mt-6">

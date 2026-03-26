@@ -108,43 +108,43 @@ export default async function ToolsIndexPage({ params }: { params: Promise<{ loc
       <main className="flex-1">
         <PageContainer className="py-14 sm:py-20">
           <div className="text-center">
-            <Badge variant="blue">Evidence-first tooling</Badge>
+            <Badge variant="blue">Secondary entry points</Badge>
             <h1 className="mt-5 text-3xl font-semibold leading-tight text-white/92 sm:text-5xl">
-              Market research tools built from the backend up
+              Tools that support the asset and report engine
             </h1>
             <p className="mx-auto mt-4 max-w-[760px] text-sm text-white/60 sm:text-base">
-              The current product shell already exposes more than a single terminal flow. These
-              tool pages break backend capabilities into dedicated entry points for live search,
-              price snapshots, video discovery, graph research, and a safer public API surface.
+              TrendAnalysis.ai should primarily win through asset hubs and published reports. These
+              pages exist as supporting entry points for users who want to inspect one workflow,
+              one data surface, or one read-only API before moving deeper into the core content.
             </p>
           </div>
 
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             <Card className="p-5">
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">
-                Research workflows
+                Start with assets
               </div>
               <p className="mt-2 text-sm text-white/62">
-                Full-stack pages that turn search, evidence extraction, clustering, and graphing
-                into reusable product surfaces.
+                Asset hubs and published reports are the main product surfaces. Use tools only when
+                you need to inspect a specific workflow behind them.
               </p>
             </Card>
             <Card className="p-5">
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">
-                Data utilities
+                Use tools selectively
               </div>
               <p className="mt-2 text-sm text-white/62">
-                Long-tail landing pages that expose individual GET endpoints as standalone tools for
-                demos, indexing, and onboarding.
+                These pages are best for narrow tasks like checking SERPs, pulling a price
+                snapshot, or validating one research flow before reading a report.
               </p>
             </Card>
             <Card className="p-5">
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/45">
-                Developer surface
+                Route back to content
               </div>
               <p className="mt-2 text-sm text-white/62">
-                Public docs for safe read-only endpoints, with private runtime routes kept separate
-                from the SEO surface.
+                Every tool page should send users back into fresher, deeper surfaces such as asset
+                hubs, recent reports, or the full terminal.
               </p>
             </Card>
           </div>
