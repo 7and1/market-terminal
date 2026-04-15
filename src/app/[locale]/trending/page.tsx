@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { Link } from '@/i18n/navigation';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { hasDb, listPublished } from '@/lib/db';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
@@ -11,8 +10,7 @@ import { SectionLabel } from '@/components/ui/section-label';
 import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/Button';
-import { filterPublishableSessions } from '@/lib/report-quality';
-import { firstEvidenceSentiment } from '@/lib/session-data';
+import { getTrendingProjection } from '@/lib/public-read-model';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,95 +60,42 @@ function mapSentiment(s: string | null | undefined): string | undefined {
   return s;
 }
 
-type AssetCard = {
-  assetKey: string;
-  label: string;
-  count: number;
-  latestDate: number;
-  latestSentiment: string | null;
-};
-
-type RecentReport = {
-  slug: string;
-  topic: string;
-  date: number;
-  sentiment: string | null;
-};
-
 const LOCALE_MAP: Record<string, string> = { en: 'en-US', es: 'es-MX', zh: 'zh-CN' };
 
 export default async function TrendingPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
+  const t = await getTranslations({ locale, namespace: 'metadata' });
   const dateFmt = LOCALE_MAP[locale] ?? 'en-US';
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
   const localePrefix = locale === 'en' ? '' : `/${locale}`;
-
-  let assets: AssetCard[] = [];
-  let recentReports: RecentReport[] = [];
-  let loadError = !hasDb();
-
-  if (!loadError) {
-    try {
-      const sessions = filterPublishableSessions(await listPublished());
-      const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
-
-      for (const s of sessions) {
-        const ak = s.assetKey as string | undefined;
-        if (!ak) continue;
-
-        const sentiment = firstEvidenceSentiment(s.meta);
-
-        const existing = grouped.get(ak);
-        if (!existing) {
-          grouped.set(ak, { count: 1, latestDate: s._creationTime, latestSentiment: sentiment });
-        } else {
-          existing.count += 1;
-          if (s._creationTime > existing.latestDate) {
-            existing.latestDate = s._creationTime;
-            if (sentiment) existing.latestSentiment = sentiment;
-          }
-        }
-      }
-
-      assets = Array.from(grouped.entries())
-        .sort((a, b) => b[1].count - a[1].count)
-        .map(([assetKey, data]) => ({
-          assetKey,
-          label: decodeURIComponent(assetKey).replace(/-/g, ' '),
-          count: data.count,
-          latestDate: data.latestDate,
-          latestSentiment: data.latestSentiment,
-        }));
-
-      recentReports = sessions
-        .filter((s) => s.slug)
-        .sort((a, b) => b._creationTime - a._creationTime)
-        .slice(0, 12)
-        .map((s) => {
-          const sentiment = firstEvidenceSentiment(s.meta);
-          return { slug: s.slug!, topic: s.topic, date: s._creationTime, sentiment };
-        });
-    } catch {
-      loadError = true;
-    }
-  }
+  const { loadError, assets, recentReports } = await getTrendingProjection();
+  const pageTitle = t('trendingTitle');
+  const pageDescription = t('trendingDesc');
+  const listItems = recentReports.length > 0
+    ? recentReports.slice(0, 20).map((report, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        name: report.topic,
+        url: `${baseUrl}${localePrefix}/report/${report.slug}`,
+      }))
+    : assets.slice(0, 20).map((asset, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        name: asset.label.charAt(0).toUpperCase() + asset.label.slice(1),
+        url: `${baseUrl}${localePrefix}/asset/${asset.assetKey}`,
+      }));
 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: 'Fresh Market Reports',
-    description: 'Latest published market explanations on TrendAnalysis.ai',
+    name: pageTitle,
+    description: pageDescription,
     url: `${baseUrl}${localePrefix}/trending`,
     inLanguage: locale,
     mainEntity: {
       '@type': 'ItemList',
-      itemListElement: assets.slice(0, 20).map((asset, i) => ({
-        '@type': 'ListItem',
-        position: i + 1,
-        name: asset.label.charAt(0).toUpperCase() + asset.label.slice(1),
-        url: `${baseUrl}${localePrefix}/asset/${asset.assetKey}`,
-      })),
+      itemListElement: listItems,
     },
   };
 
@@ -168,10 +113,8 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">Fresh Market Reports</h1>
-            <p className="mt-1 text-sm text-white/50">
-              Start with the newest published explanations, then pivot into the underlying asset hubs.
-            </p>
+            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">{pageTitle}</h1>
+            <p className="mt-1 text-sm text-white/50">{pageDescription}</p>
           </div>
           <Button asChild>
             <Link href="/asset">
@@ -236,6 +179,14 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
                           <span className="text-white/20">|</span>
                           <span>{new Date(asset.latestDate).toLocaleDateString(dateFmt)}</span>
                         </div>
+                        <p className="mt-3 text-sm leading-relaxed text-white/56">
+                          {asset.summary || 'Open the asset hub for the current baseline, recurring catalysts, and report archive.'}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/42">
+                          <span>{asset.evidenceCount} evidence</span>
+                          <span className="text-white/20">&middot;</span>
+                          <span>{asset.domainCount} domains</span>
+                        </div>
                       </Card>
                     </Link>
                   ))}
@@ -265,6 +216,14 @@ export default async function TrendingPage({ params }: { params: Promise<{ local
                         </div>
                         <div className="mt-2 text-xs text-white/45">
                           {new Date(report.date).toLocaleDateString(dateFmt)}
+                        </div>
+                        <p className="mt-3 text-sm leading-relaxed text-white/56">
+                          {report.summary || 'Open the report for the full evidence-backed explanation.'}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/42">
+                          <span>{report.evidenceCount} evidence</span>
+                          <span className="text-white/20">&middot;</span>
+                          <span>{report.domainCount} domains</span>
                         </div>
                       </Card>
                     </Link>

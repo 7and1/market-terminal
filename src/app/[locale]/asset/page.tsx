@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { Link } from '@/i18n/navigation';
 import { getTranslations, setRequestLocale } from 'next-intl/server';
-import { hasDb, listPublished } from '@/lib/db';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
@@ -10,8 +9,7 @@ import { Card } from '@/components/ui/card';
 import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/Button';
-import { filterPublishableSessions } from '@/lib/report-quality';
-import { firstEvidenceSentiment } from '@/lib/session-data';
+import { getAssetIndexProjection } from '@/lib/public-read-model';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,60 +64,19 @@ const LOCALE_MAP: Record<string, string> = { en: 'en-US', es: 'es-MX', zh: 'zh-C
 export default async function AssetIndexPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
+  const t = await getTranslations({ locale, namespace: 'metadata' });
   const dateFmt = LOCALE_MAP[locale] ?? 'en-US';
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
   const localePrefix = locale === 'en' ? '' : `/${locale}`;
-
-  let assets: Array<{
-    assetKey: string;
-    label: string;
-    count: number;
-    latestDate: number;
-    latestSentiment: string | null;
-  }> = [];
-  let loadError = !hasDb();
-
-  if (!loadError) {
-    try {
-      const sessions = filterPublishableSessions(await listPublished());
-      const grouped = new Map<string, { count: number; latestDate: number; latestSentiment: string | null }>();
-
-      for (const s of sessions) {
-        const ak = s.assetKey as string | undefined;
-        if (!ak) continue;
-
-        const existing = grouped.get(ak);
-        if (!existing) {
-          const sentiment = firstEvidenceSentiment(s.meta);
-          grouped.set(ak, { count: 1, latestDate: s._creationTime, latestSentiment: sentiment });
-        } else {
-          existing.count += 1;
-          if (s._creationTime > existing.latestDate) {
-            existing.latestDate = s._creationTime;
-            existing.latestSentiment = firstEvidenceSentiment(s.meta);
-          }
-        }
-      }
-
-      assets = Array.from(grouped.entries())
-        .sort((a, b) => b[1].latestDate - a[1].latestDate)
-        .map(([assetKey, data]) => ({
-          assetKey,
-          label: decodeURIComponent(assetKey).replace(/-/g, ' '),
-          count: data.count,
-          latestDate: data.latestDate,
-          latestSentiment: data.latestSentiment,
-        }));
-    } catch {
-      loadError = true;
-    }
-  }
+  const { loadError, assets } = await getAssetIndexProjection();
+  const pageTitle = t('assetIndexTitle');
+  const pageDescription = t('assetIndexDesc');
 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: 'Market Asset Hubs',
-    description: 'Published market asset hubs on TrendAnalysis.ai.',
+    name: pageTitle,
+    description: pageDescription,
     url: `${baseUrl}${localePrefix}/asset`,
     inLanguage: locale,
     mainEntity: {
@@ -147,10 +104,8 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
         {/* Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">Market Asset Hubs</h1>
-            <p className="mt-1 text-sm text-white/50">
-              Start from a tracked asset hub to follow published reports, recurring catalysts, and the latest sentiment shift.
-            </p>
+            <h1 className="text-2xl font-semibold text-white/90 sm:text-3xl">{pageTitle}</h1>
+            <p className="mt-1 text-sm text-white/50">{pageDescription}</p>
           </div>
           <Button asChild>
             <Link href="/trending">
@@ -209,6 +164,14 @@ export default async function AssetIndexPage({ params }: { params: Promise<{ loc
                     <span>{asset.count} {asset.count === 1 ? 'analysis' : 'analyses'}</span>
                     <span className="text-white/20">|</span>
                     <span>{new Date(asset.latestDate).toLocaleDateString(dateFmt)}</span>
+                  </div>
+                  <p className="mt-3 text-sm leading-relaxed text-white/56">
+                    {asset.summary || 'Open the asset hub for the current baseline, recurring catalysts, and report archive.'}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/42">
+                    <span>{asset.evidenceCount} evidence</span>
+                    <span className="text-white/20">&middot;</span>
+                    <span>{asset.domainCount} domains</span>
                   </div>
                 </Card>
               </Link>

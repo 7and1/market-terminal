@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS market_signal.sessions (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id    TEXT UNIQUE NOT NULL,
   topic         TEXT NOT NULL,
+  report_key    TEXT,
   status        TEXT NOT NULL DEFAULT 'running',
   step          TEXT NOT NULL DEFAULT 'plan',
   progress      REAL NOT NULL DEFAULT 0,
@@ -18,8 +19,11 @@ CREATE TABLE IF NOT EXISTS market_signal.sessions (
   updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE market_signal.sessions ADD COLUMN IF NOT EXISTS report_key TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_sessions_slug ON market_signal.sessions(slug) WHERE slug IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_asset ON market_signal.sessions(asset_key, status);
+CREATE INDEX IF NOT EXISTS idx_sessions_report_key ON market_signal.sessions(report_key);
 CREATE INDEX IF NOT EXISTS idx_sessions_created_session ON market_signal.sessions(created_at DESC, session_id DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_status_created_session ON market_signal.sessions(status, created_at DESC, session_id DESC);
 
@@ -74,3 +78,38 @@ CREATE TABLE IF NOT EXISTS market_signal.monitor_runs (
 
 CREATE INDEX IF NOT EXISTS idx_monitor_runs_monitor_created ON market_signal.monitor_runs(monitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_monitor_runs_status_created ON market_signal.monitor_runs(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS market_signal.report_heads (
+  report_key        TEXT PRIMARY KEY,
+  canonical_label   TEXT NOT NULL,
+  subject_key       TEXT NOT NULL,
+  current_session_id TEXT NOT NULL,
+  current_slug      TEXT NOT NULL,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_heads_subject_updated ON market_signal.report_heads(subject_key, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_heads_current_slug ON market_signal.report_heads(current_slug);
+
+CREATE TABLE IF NOT EXISTS market_signal.query_aliases (
+  alias_key         TEXT PRIMARY KEY,
+  alias_label       TEXT NOT NULL,
+  target_type       TEXT NOT NULL,
+  report_key        TEXT,
+  asset_key         TEXT,
+  source            TEXT NOT NULL DEFAULT 'catalog',
+  confidence        REAL NOT NULL DEFAULT 0.5,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT chk_query_aliases_target_type CHECK (target_type IN ('report', 'asset')),
+  CONSTRAINT chk_query_aliases_source CHECK (source IN ('catalog', 'report', 'manual')),
+  CONSTRAINT chk_query_aliases_target_presence CHECK (
+    (target_type = 'report' AND report_key IS NOT NULL) OR
+    (target_type = 'asset' AND asset_key IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_aliases_target_type ON market_signal.query_aliases(target_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_query_aliases_report_key ON market_signal.query_aliases(report_key);
+CREATE INDEX IF NOT EXISTS idx_query_aliases_asset_key ON market_signal.query_aliases(asset_key);

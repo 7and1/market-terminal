@@ -30,6 +30,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Cloudflare Build
+        run: npm run build:cf
+
   deploy:
     needs: build-check
     runs-on: ubuntu-latest

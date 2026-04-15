@@ -1,68 +1,20 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
-import { hasDb, getSession, publishSession } from '@/lib/db';
+import { hasDb, getSession, patchMeta } from '@/lib/db';
 import { createLogger } from '@/lib/log';
-import { summarizeSessionQuality } from '@/lib/report-quality';
+import { buildSessionDiffSummary } from '@/lib/monitoring';
+import { promoteReadySessionToPublicHead } from '@/lib/publish-session';
+import { normalizeQueryLocale } from '@/lib/query-copy';
+import { isAuthorizedSessionAccess } from '@/lib/session-write-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const PublishSchema = z.object({
   sessionId: z.string().uuid(),
+  locale: z.string().trim().min(2).max(10).optional(),
 });
-
-const ASSET_ALIASES: Record<string, string> = {
-  btc: 'bitcoin',
-  bitcoin: 'bitcoin',
-  eth: 'ethereum',
-  ethereum: 'ethereum',
-  sol: 'solana',
-  solana: 'solana',
-  xau: 'gold',
-  gold: 'gold',
-  dxy: 'dxy',
-  nvda: 'nvda',
-  aapl: 'aapl',
-  tsla: 'tsla',
-  msft: 'msft',
-  goog: 'goog',
-  amzn: 'amzn',
-  meta: 'meta',
-  oil: 'oil',
-  'crude oil': 'oil',
-  spy: 'spy',
-  qqq: 'qqq',
-};
-
-const SLUG_SUFFIX_LENGTHS = [4, 8, 12] as const;
-const FALLBACK_ASSET_KEY = 'asset';
-const FALLBACK_SLUG_KEY = 'report';
-
-function normalizeAssetKey(topic: string): string {
-  const cleaned = topic.trim().toLowerCase().replace(/[^a-z0-9\s-]/g, '');
-  const normalized = ASSET_ALIASES[cleaned] ?? cleaned.replace(/\s+/g, '-').slice(0, 48);
-  return normalized || FALLBACK_ASSET_KEY;
-}
-
-function generateSlug(topic: string, sessionId: string, suffixLength: number): string {
-  const date = new Date().toISOString().slice(0, 10);
-  const key = topic
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .slice(0, 40) || FALLBACK_SLUG_KEY;
-  const short = sessionId.replace(/-/g, '').slice(0, suffixLength) || 'sess';
-  return `${key}-${date}-${short}`;
-}
-
-function isSlugConflict(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const pg = error as { code?: string; constraint?: string };
-  if (pg.code !== '23505') return false;
-  return !pg.constraint || pg.constraint.includes('slug');
-}
 
 export async function POST(request: Request) {
   const reqId = crypto.randomUUID();
@@ -82,6 +34,10 @@ export async function POST(request: Request) {
   }
 
   const { sessionId } = parsed.data;
+  if (!isAuthorizedSessionAccess(request, sessionId)) {
+    log.warn('sessions.publish.unauthorized', { sessionId, ms: Date.now() - startedAt });
+    return NextResponse.json({ error: 'Unauthorized session publish' }, { status: 403 });
+  }
 
   let session: Awaited<ReturnType<typeof getSession>>;
   try {
@@ -100,68 +56,103 @@ export async function POST(request: Request) {
     log.warn('sessions.publish.not_ready', { sessionId, status: session.status, ms: Date.now() - startedAt });
     return NextResponse.json({ error: 'Session is not ready' }, { status: 400 });
   }
+  const locale = normalizeQueryLocale(
+    parsed.data.locale ||
+      (typeof session.meta?.locale === 'string' ? session.meta.locale : undefined),
+  );
   if (session.published && session.slug) {
-    const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
     log.info('sessions.publish.already_published', { sessionId, slug: session.slug, ms: Date.now() - startedAt });
     return NextResponse.json({
       slug: session.slug,
-      url: `${basePath}/report/${session.slug}`,
+      locale,
       alreadyPublished: true,
     });
   }
 
-  const quality = summarizeSessionQuality(session);
-  if (!quality.publishable) {
-    const message = [
-      'This run does not meet the public report threshold yet.',
-      ...quality.issues,
-    ].join(' ');
-    log.warn('sessions.publish.quality_rejected', {
+  const promotion = await promoteReadySessionToPublicHead(session, { locale });
+  if (!promotion.ok) {
+    if (promotion.code === 'INSUFFICIENT_REPORT_QUALITY' && promotion.quality) {
+      log.warn('sessions.publish.quality_rejected', {
+        sessionId,
+        evidence: promotion.quality.evidenceCount,
+        uniqueDomains: promotion.quality.uniqueDomainCount,
+        primaryLikeCount: promotion.quality.primaryLikeCount,
+        ms: Date.now() - startedAt,
+      });
+      return NextResponse.json(
+        {
+          error: promotion.error,
+          code: promotion.code,
+          quality: promotion.quality,
+        },
+        { status: promotion.status },
+      );
+    }
+
+    if (promotion.code === 'PRIVATE_ONLY_SESSION') {
+      log.warn('sessions.publish.private_only', {
+        sessionId,
+        topic: session.topic.slice(0, 120),
+        ms: Date.now() - startedAt,
+      });
+      return NextResponse.json(
+        {
+          error: promotion.error,
+          code: promotion.code,
+          visibility: 'private',
+          canonicalLabel: promotion.canonicalLabel,
+        },
+        { status: promotion.status },
+      );
+    }
+
+    log.error('sessions.publish.update_failed', {
       sessionId,
-      evidence: quality.evidenceCount,
-      uniqueDomains: quality.uniqueDomainCount,
-      primaryLikeCount: quality.primaryLikeCount,
+      error: promotion.error,
       ms: Date.now() - startedAt,
     });
-    return NextResponse.json(
-      {
-        error: message,
-        code: 'INSUFFICIENT_REPORT_QUALITY',
-        quality,
-      },
-      { status: 422 },
-    );
+    return NextResponse.json({ error: promotion.error, code: promotion.code }, { status: promotion.status });
   }
 
-  const assetKey = normalizeAssetKey(session.topic);
-  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
-
-  let slug = '';
-  let published = false;
-  for (const suffixLength of SLUG_SUFFIX_LENGTHS) {
-    slug = generateSlug(session.topic, sessionId, suffixLength);
+  let refreshDiff: Awaited<ReturnType<typeof buildSessionDiffSummary>> | null = null;
+  if (promotion.previousHead?.currentSessionId && promotion.previousHead.currentSessionId !== sessionId) {
     try {
-      await publishSession(sessionId, slug, assetKey);
-      published = true;
-      break;
-    } catch (e) {
-      if (!isSlugConflict(e) || suffixLength === SLUG_SUFFIX_LENGTHS[SLUG_SUFFIX_LENGTHS.length - 1]) {
-        const error = e instanceof Error ? e.message : 'publish failed';
-        log.error('sessions.publish.update_failed', { sessionId, slug, assetKey, error, ms: Date.now() - startedAt });
-        return NextResponse.json({ error }, { status: 500 });
+      const baselineSession = await getSession(promotion.previousHead.currentSessionId);
+      if (baselineSession) {
+        refreshDiff = await buildSessionDiffSummary({
+          topic: promotion.canonicalLabel,
+          currentMeta: session.meta as Record<string, unknown>,
+          baselineMeta: baselineSession.meta as Record<string, unknown>,
+        });
+        await patchMeta(sessionId, {
+          refreshDiff: {
+            ...refreshDiff,
+            previousSessionId: baselineSession.sessionId,
+          },
+        });
       }
-      log.warn('sessions.publish.slug_conflict', { sessionId, slug, retrying: true });
+    } catch (error) {
+      log.warn('sessions.publish.refresh_diff_failed', {
+        sessionId,
+        reportKey: promotion.reportKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  if (!published) {
-    log.error('sessions.publish.no_slug_resolved', { sessionId, ms: Date.now() - startedAt });
-    return NextResponse.json({ error: 'Could not generate a unique slug' }, { status: 500 });
-  }
-
-  log.info('sessions.publish.ok', { sessionId, slug, assetKey, ms: Date.now() - startedAt });
+  log.info('sessions.publish.ok', {
+    sessionId,
+    slug: promotion.slug,
+    assetKey: promotion.assetKey,
+    alreadyPublished: promotion.alreadyPublished,
+    ms: Date.now() - startedAt,
+  });
   return NextResponse.json({
-    slug,
-    url: `${basePath}/report/${slug}`,
+    slug: promotion.slug,
+    locale,
+    alreadyPublished: promotion.alreadyPublished,
+    reportKey: promotion.reportKey,
+    canonicalLabel: promotion.canonicalLabel,
+    refreshDiff,
   });
 }

@@ -20,6 +20,7 @@ async function main() {
     const { rowCount } = await pool.query(
       `DELETE FROM market_signal.sessions
        WHERE published IS NOT TRUE
+         AND status <> 'ready'
          AND created_at < NOW() - INTERVAL '24 hours'`,
     );
     console.log(

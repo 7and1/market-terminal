@@ -29,10 +29,14 @@ export default async function TerminalPage({
 }) {
   const { locale } = await params;
   setRequestLocale(locale);
+  const t = await getTranslations({ locale, namespace: 'metadata' });
 
   return (
-    <Suspense fallback={<div className="min-h-screen bg-terminal" />}>
-      <Terminal />
-    </Suspense>
+    <>
+      <h1 className="sr-only">{t('terminalTitle')}</h1>
+      <Suspense fallback={<div className="min-h-screen bg-terminal" />}>
+        <Terminal />
+      </Suspense>
+    </>
   );
 }

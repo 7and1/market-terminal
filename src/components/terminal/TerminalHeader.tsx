@@ -1,6 +1,5 @@
 'use client';
 
-import { Link } from '@/i18n/navigation';
 import {
   Network,
   RefreshCw,
@@ -10,6 +9,7 @@ import {
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 
+import { Link } from '@/i18n/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { PipelineStep } from '@/components/terminal/PipelineTimeline';
@@ -46,7 +46,13 @@ export function TerminalHeader({
   running: boolean;
   session: { id: string; topic: string; step: PipelineStep } | null;
   publishing: boolean;
-  publishedReport: { fullUrl: string; relativeUrl: string; alreadyPublished: boolean } | null;
+  publishedReport: {
+    slug: string;
+    locale: string;
+    fullUrl: string;
+    relativeUrl: string;
+    alreadyPublished: boolean;
+  } | null;
   snapshotMode: boolean;
   terminalMode: 'draft' | 'live' | 'replay';
   warnings: string[];
@@ -166,12 +172,13 @@ export function TerminalHeader({
                   <span>
                     {publishedReport.alreadyPublished ? t('reportReadyExisting') : t('reportReady')}
                   </span>
-                  <a
-                    href={publishedReport.relativeUrl}
+                  <Link
+                    href={`/report/${publishedReport.slug}`}
+                    locale={publishedReport.locale}
                     className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-white/80 transition hover:bg-white/[0.08]"
                   >
                     {t('openReport')}
-                  </a>
+                  </Link>
                   <span className="text-white/45">{publishedReport.fullUrl}</span>
                 </div>
               ) : null}

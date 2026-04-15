@@ -16,7 +16,8 @@
     "cleanup:sessions": "node scripts/cleanup-expired-sessions.mjs",
     "monitors:dispatch": "node scripts/dispatch-monitors.mjs",
     "schema:apply": "node scripts/apply-schema.mjs",
-    "keyword-research": "npx tsx scripts/keyword-research.ts"
+    "keyword-research": "npx tsx scripts/keyword-research.ts",
+    "seed:canonical": "npx tsx scripts/seed-canonical-heads.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.15",

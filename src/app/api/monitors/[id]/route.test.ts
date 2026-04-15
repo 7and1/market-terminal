@@ -15,8 +15,23 @@ vi.mock('@/lib/db', () => ({
 describe('/api/monitors/[id] PATCH', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    process.env.OPERATOR_TOKEN = 'operator-secret';
     hasDb.mockReturnValue(true);
     toPublicMonitor.mockImplementation((monitor) => monitor ? { ...monitor, notifyWebhookUrl: null, hasNotifyWebhook: Boolean(monitor.notifyWebhookUrl) } : null);
+  });
+
+  it('returns 403 without operator auth', async () => {
+    const { PATCH } = await import('@/app/api/monitors/[id]/route');
+    const response = await PATCH(
+      new Request('http://localhost/api/monitors/id', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ active: false }),
+      }),
+      { params: Promise.resolve({ id: '1cb63266-2f69-4bb6-97c2-2d62e5f14df5' }) },
+    );
+
+    expect(response.status).toBe(403);
   });
 
   it('returns 404 when the monitor does not exist', async () => {
@@ -26,7 +41,7 @@ describe('/api/monitors/[id] PATCH', () => {
     const response = await PATCH(
       new Request('http://localhost/api/monitors/id', {
         method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-operator-token': 'operator-secret' },
         body: JSON.stringify({ active: false }),
       }),
       { params: Promise.resolve({ id: '1cb63266-2f69-4bb6-97c2-2d62e5f14df5' }) },
@@ -43,7 +58,7 @@ describe('/api/monitors/[id] PATCH', () => {
     const response = await PATCH(
       new Request('http://localhost/api/monitors/id', {
         method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-operator-token': 'operator-secret' },
         body: JSON.stringify({ active: false, cadenceMinutes: 360 }),
       }),
       { params: Promise.resolve({ id: '1cb63266-2f69-4bb6-97c2-2d62e5f14df5' }) },

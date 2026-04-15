@@ -1,7 +1,6 @@
 import { getLocale, getTranslations } from 'next-intl/server';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/Badge';
-import { CreateMonitorButton } from '@/components/report/CreateMonitorButton';
 
 const LOCALE_MAP: Record<string, string> = { en: 'en-US', es: 'es-MX', zh: 'zh-CN' };
 
@@ -55,7 +54,6 @@ export async function ReportHeader({
             <Badge variant={mode === 'deep' ? 'teal' : 'blue'}>
               {mode.toUpperCase()} {t('mode')}
             </Badge>
-            <CreateMonitorButton topic={topic} />
           </div>
         </div>
       </CardHeader>

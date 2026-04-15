@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { createMonitor, hasDb, listMonitors, toPublicMonitor, type MonitorCadenceMinutes } from '@/lib/db';
 import { createLogger } from '@/lib/log';
+import { getOperatorAccessIssue } from '@/lib/operator-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,9 +18,15 @@ const CreateMonitorSchema = z.object({
   notifyWebhookUrl: z.string().url().nullable().optional(),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
   const reqId = crypto.randomUUID();
   const log = createLogger({ reqId, route: '/api/monitors' });
+
+  const accessIssue = getOperatorAccessIssue(request);
+  if (accessIssue) {
+    log.warn('monitors.list.unauthorized', { status: accessIssue.status });
+    return NextResponse.json({ error: accessIssue.error }, { status: accessIssue.status });
+  }
 
   if (!hasDb()) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 400 });
@@ -39,6 +46,12 @@ export async function GET() {
 export async function POST(request: Request) {
   const reqId = crypto.randomUUID();
   const log = createLogger({ reqId, route: '/api/monitors' });
+
+  const accessIssue = getOperatorAccessIssue(request);
+  if (accessIssue) {
+    log.warn('monitors.create.unauthorized', { status: accessIssue.status });
+    return NextResponse.json({ error: accessIssue.error }, { status: accessIssue.status });
+  }
 
   if (!hasDb()) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 400 });

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { hasDb, listSessionsPage } from '@/lib/db';
 import { createLogger } from '@/lib/log';
 import { asSessionMeta, countOf, getArtifacts, stringArray } from '@/lib/session-data';
+import { listAuthorizedSessionIds } from '@/lib/session-write-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -109,10 +110,24 @@ export async function GET(request: Request) {
   }
 
   const { limit, q, status, cursor } = parsed.data;
+  const authorizedSessionIds = listAuthorizedSessionIds(request);
+  if (!authorizedSessionIds.length) {
+    log.info('sessions.list.empty_unauthorized', { ms: Date.now() - startedAt });
+    return NextResponse.json(
+      {
+        sessions: [],
+        pageInfo: {
+          nextCursor: null,
+          hasMore: false,
+        },
+      },
+      { status: 200 },
+    );
+  }
 
   let page: Awaited<ReturnType<typeof listSessionsPage>>;
   try {
-    page = await listSessionsPage({ limit, status, q, cursor });
+    page = await listSessionsPage({ limit, status, q, cursor, sessionIds: authorizedSessionIds });
   } catch (e) {
     const error = e instanceof Error ? e.message : 'fetch failed';
     log.error('sessions.list.fetch_failed', { error, ms: Date.now() - startedAt });

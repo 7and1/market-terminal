@@ -31,6 +31,7 @@ export function hasDb(): boolean {
 export type SessionRow = {
   sessionId: string;
   topic: string;
+  reportKey: string | null;
   status: string;
   step: string;
   progress: number;
@@ -39,6 +40,42 @@ export type SessionRow = {
   slug: string | null;
   assetKey: string | null;
   _creationTime: number; // epoch ms — backwards compat with Convex consumers
+};
+
+export type ReportHeadRow = {
+  reportKey: string;
+  canonicalLabel: string;
+  subjectKey: string;
+  currentSessionId: string;
+  currentSlug: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type QueryAliasTargetType = 'report' | 'asset';
+export type QueryAliasSource = 'catalog' | 'report' | 'manual';
+
+export type QueryAliasRow = {
+  aliasKey: string;
+  aliasLabel: string;
+  targetType: QueryAliasTargetType;
+  reportKey: string | null;
+  assetKey: string | null;
+  source: QueryAliasSource;
+  confidence: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PublishedReportRecord = {
+  session: SessionRow;
+  head: ReportHeadRow | null;
+  isCurrent: boolean;
+};
+
+export type CurrentPublishedReportRow = {
+  session: SessionRow;
+  head: ReportHeadRow;
 };
 
 export type MonitorMode = 'fast' | 'deep';
@@ -133,6 +170,7 @@ function toSession(row: Record<string, unknown>): SessionRow {
   return {
     sessionId: row.session_id as string,
     topic: row.topic as string,
+    reportKey: typeof row.report_key === 'string' ? row.report_key : null,
     status: row.status as string,
     step: row.step as string,
     progress: row.progress as number,
@@ -141,6 +179,36 @@ function toSession(row: Record<string, unknown>): SessionRow {
     slug: (row.slug as string) ?? null,
     assetKey: (row.asset_key as string) ?? null,
     _creationTime: new Date(row.created_at as string).getTime(),
+  };
+}
+
+function toReportHead(row: Record<string, unknown>): ReportHeadRow {
+  return {
+    reportKey: String(row.report_key || ''),
+    canonicalLabel: String(row.canonical_label || ''),
+    subjectKey: String(row.subject_key || ''),
+    currentSessionId: String(row.current_session_id || ''),
+    currentSlug: String(row.current_slug || ''),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+  };
+}
+
+function toQueryAlias(row: Record<string, unknown>): QueryAliasRow {
+  const targetType = String(row.target_type || 'asset') === 'report' ? 'report' : 'asset';
+  const source = ['catalog', 'report', 'manual'].includes(String(row.source || 'catalog'))
+    ? (String(row.source || 'catalog') as QueryAliasSource)
+    : 'catalog';
+  return {
+    aliasKey: String(row.alias_key || ''),
+    aliasLabel: String(row.alias_label || ''),
+    targetType,
+    reportKey: typeof row.report_key === 'string' ? row.report_key : null,
+    assetKey: typeof row.asset_key === 'string' ? row.asset_key : null,
+    source,
+    confidence: typeof row.confidence === 'number' ? row.confidence : Number(row.confidence || 0),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
   };
 }
 
@@ -211,14 +279,15 @@ export async function createSession(
   step: string,
   progress: number,
   meta: Record<string, unknown>,
+  reportKey?: string | null,
 ): Promise<void> {
   const pool = getPool();
   if (!pool) return;
   await pool.query(
-    `INSERT INTO market_signal.sessions (session_id, topic, status, step, progress, meta)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO market_signal.sessions (session_id, topic, report_key, status, step, progress, meta)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (session_id) DO NOTHING`,
-    [sessionId, topic, status, step, progress, JSON.stringify(meta)],
+    [sessionId, topic, reportKey || null, status, step, progress, JSON.stringify(meta)],
   );
 }
 
@@ -270,18 +339,34 @@ export async function patchMeta(
   );
 }
 
+export async function updateSessionReportKey(sessionId: string, reportKey: string | null): Promise<void> {
+  const pool = getPool();
+  if (!pool) return;
+  await pool.query(
+    `UPDATE market_signal.sessions
+     SET report_key = $2, updated_at = NOW()
+     WHERE session_id = $1`,
+    [sessionId, reportKey],
+  );
+}
+
 export async function publishSession(
   sessionId: string,
   slug: string,
   assetKey: string,
+  reportKey?: string | null,
 ): Promise<void> {
   const pool = getPool();
   if (!pool) return;
   await pool.query(
     `UPDATE market_signal.sessions
-     SET published = TRUE, slug = $2, asset_key = $3, updated_at = NOW()
+     SET published = TRUE,
+         slug = $2,
+         asset_key = $3,
+         report_key = COALESCE($4, report_key),
+         updated_at = NOW()
      WHERE session_id = $1`,
-    [sessionId, slug, assetKey],
+    [sessionId, slug, assetKey, reportKey || null],
   );
 }
 
@@ -307,6 +392,47 @@ export async function getBySlug(slug: string): Promise<SessionRow | null> {
     [slug],
   );
   return rows.length ? toSession(rows[0]) : null;
+}
+
+export async function getPublishedReportBySlug(slug: string): Promise<PublishedReportRecord | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT s.*,
+            rh.report_key AS head_report_key,
+            rh.canonical_label,
+            rh.subject_key,
+            rh.current_session_id,
+            rh.current_slug,
+            rh.created_at AS head_created_at,
+            rh.updated_at AS head_updated_at
+     FROM market_signal.sessions s
+     LEFT JOIN market_signal.report_heads rh
+       ON rh.report_key = s.report_key
+     WHERE s.slug = $1 AND s.published = TRUE
+     LIMIT 1`,
+    [slug],
+  );
+  if (!rows.length) return null;
+  const row = rows[0] as Record<string, unknown>;
+  const hasHead = typeof row.head_report_key === 'string' && row.head_report_key.length > 0;
+  const head = hasHead
+    ? toReportHead({
+        report_key: row.head_report_key,
+        canonical_label: row.canonical_label,
+        subject_key: row.subject_key,
+        current_session_id: row.current_session_id,
+        current_slug: row.current_slug,
+        created_at: row.head_created_at,
+        updated_at: row.head_updated_at,
+      })
+    : null;
+
+  return {
+    session: toSession(row),
+    head,
+    isCurrent: !head || head.currentSlug === slug,
+  };
 }
 
 export async function listSessions(
@@ -344,11 +470,13 @@ export async function listSessionsPage({
   status,
   q,
   cursor,
+  sessionIds,
 }: {
   limit?: number;
   status?: string;
   q?: string;
   cursor?: string;
+  sessionIds?: string[];
 }): Promise<CursorPage<SessionRow>> {
   const pool = getPool();
   if (!pool) return { items: [], nextCursor: null, hasMore: false };
@@ -364,6 +492,10 @@ export async function listSessionsPage({
   if (q && q.trim()) {
     conditions.push(`topic ILIKE $${idx++}`);
     params.push(`%${q.trim()}%`);
+  }
+  if (sessionIds?.length) {
+    conditions.push(`session_id = ANY($${idx++}::text[])`);
+    params.push(sessionIds);
   }
 
   const parsedCursor = decodeCursor<SessionCursor>(cursor);
@@ -407,6 +539,83 @@ export async function listPublished(limit = 200): Promise<SessionRow[]> {
   return rows.map(toSession);
 }
 
+export async function listCurrentPublished(limit = 200): Promise<CurrentPublishedReportRow[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT s.*,
+            rh.report_key AS head_report_key,
+            rh.canonical_label,
+            rh.subject_key,
+            rh.current_session_id,
+            rh.current_slug,
+            rh.created_at AS head_created_at,
+            rh.updated_at AS head_updated_at
+     FROM market_signal.report_heads rh
+     JOIN market_signal.sessions s
+       ON s.session_id = rh.current_session_id
+     WHERE s.published = TRUE
+     ORDER BY s.created_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+
+  return rows.map((row) => {
+    const record = row as Record<string, unknown>;
+    return {
+      session: toSession(record),
+      head: toReportHead({
+        report_key: record.head_report_key,
+        canonical_label: record.canonical_label,
+        subject_key: record.subject_key,
+        current_session_id: record.current_session_id,
+        current_slug: record.current_slug,
+        created_at: record.head_created_at,
+        updated_at: record.head_updated_at,
+      }),
+    };
+  });
+}
+
+export async function listCurrentPublishedByAsset(assetKey: string, limit = 50): Promise<CurrentPublishedReportRow[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT s.*,
+            rh.report_key AS head_report_key,
+            rh.canonical_label,
+            rh.subject_key,
+            rh.current_session_id,
+            rh.current_slug,
+            rh.created_at AS head_created_at,
+            rh.updated_at AS head_updated_at
+     FROM market_signal.report_heads rh
+     JOIN market_signal.sessions s
+       ON s.session_id = rh.current_session_id
+     WHERE s.published = TRUE
+       AND s.asset_key = $1
+     ORDER BY s.created_at DESC
+     LIMIT $2`,
+    [assetKey, limit],
+  );
+
+  return rows.map((row) => {
+    const record = row as Record<string, unknown>;
+    return {
+      session: toSession(record),
+      head: toReportHead({
+        report_key: record.head_report_key,
+        canonical_label: record.canonical_label,
+        subject_key: record.subject_key,
+        current_session_id: record.current_session_id,
+        current_slug: record.current_slug,
+        created_at: record.head_created_at,
+        updated_at: record.head_updated_at,
+      }),
+    };
+  });
+}
+
 export async function listByAsset(assetKey: string, limit = 50): Promise<SessionRow[]> {
   const pool = getPool();
   if (!pool) return [];
@@ -417,6 +626,36 @@ export async function listByAsset(assetKey: string, limit = 50): Promise<Session
     [assetKey, limit],
   );
   return rows.map(toSession);
+}
+
+export async function getReportHead(reportKey: string): Promise<ReportHeadRow | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `SELECT * FROM market_signal.report_heads WHERE report_key = $1 LIMIT 1`,
+    [reportKey],
+  );
+  return rows.length ? toReportHead(rows[0]) : null;
+}
+
+export async function listReportHeads(limit = 300): Promise<ReportHeadRow[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM market_signal.report_heads ORDER BY updated_at DESC LIMIT $1`,
+    [limit],
+  );
+  return rows.map(toReportHead);
+}
+
+export async function listQueryAliases(limit = 600): Promise<QueryAliasRow[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  const { rows } = await pool.query(
+    `SELECT * FROM market_signal.query_aliases ORDER BY updated_at DESC LIMIT $1`,
+    [limit],
+  );
+  return rows.map(toQueryAlias);
 }
 
 // ---------------------------------------------------------------------------
@@ -754,6 +993,86 @@ export async function markMonitorAlertSent(monitorId: string): Promise<void> {
   );
 }
 
+export async function upsertReportHead({
+  reportKey,
+  canonicalLabel,
+  subjectKey,
+  currentSessionId,
+  currentSlug,
+}: {
+  reportKey: string;
+  canonicalLabel: string;
+  subjectKey: string;
+  currentSessionId: string;
+  currentSlug: string;
+}): Promise<ReportHeadRow | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO market_signal.report_heads (
+       report_key,
+       canonical_label,
+       subject_key,
+       current_session_id,
+       current_slug
+     )
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (report_key) DO UPDATE
+       SET canonical_label = COALESCE(NULLIF(EXCLUDED.canonical_label, ''), market_signal.report_heads.canonical_label),
+           subject_key = EXCLUDED.subject_key,
+           current_session_id = EXCLUDED.current_session_id,
+           current_slug = EXCLUDED.current_slug,
+           updated_at = NOW()
+     RETURNING *`,
+    [reportKey, canonicalLabel, subjectKey, currentSessionId, currentSlug],
+  );
+  return rows.length ? toReportHead(rows[0]) : null;
+}
+
+export async function upsertQueryAlias({
+  aliasKey,
+  aliasLabel,
+  targetType,
+  reportKey,
+  assetKey,
+  source,
+  confidence,
+}: {
+  aliasKey: string;
+  aliasLabel: string;
+  targetType: QueryAliasTargetType;
+  reportKey?: string | null;
+  assetKey?: string | null;
+  source: QueryAliasSource;
+  confidence: number;
+}): Promise<QueryAliasRow | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  const { rows } = await pool.query(
+    `INSERT INTO market_signal.query_aliases (
+       alias_key,
+       alias_label,
+       target_type,
+       report_key,
+       asset_key,
+       source,
+       confidence
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (alias_key) DO UPDATE
+       SET alias_label = EXCLUDED.alias_label,
+           target_type = EXCLUDED.target_type,
+           report_key = EXCLUDED.report_key,
+           asset_key = EXCLUDED.asset_key,
+           source = EXCLUDED.source,
+           confidence = EXCLUDED.confidence,
+           updated_at = NOW()
+     RETURNING *`,
+    [aliasKey, aliasLabel, targetType, reportKey || null, assetKey || null, source, confidence],
+  );
+  return rows.length ? toQueryAlias(rows[0]) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Event mutations
 // ---------------------------------------------------------------------------
@@ -853,6 +1172,7 @@ export async function deleteExpired(): Promise<number> {
   const { rowCount } = await pool.query(
     `DELETE FROM market_signal.sessions
      WHERE published IS NOT TRUE
+       AND status <> 'ready'
        AND created_at < NOW() - INTERVAL '24 hours'`,
   );
   return rowCount ?? 0;
@@ -883,8 +1203,11 @@ export async function probeDbSchema(): Promise<DbSchemaProbe> {
     'market_signal.session_events',
     'market_signal.monitors',
     'market_signal.monitor_runs',
+    'market_signal.report_heads',
+    'market_signal.query_aliases',
     'market_signal.idx_sessions_slug',
     'market_signal.idx_sessions_asset',
+    'market_signal.idx_sessions_report_key',
     'market_signal.idx_sessions_created_session',
     'market_signal.idx_sessions_status_created_session',
     'market_signal.idx_events_session',
@@ -892,6 +1215,11 @@ export async function probeDbSchema(): Promise<DbSchemaProbe> {
     'market_signal.idx_monitors_active_last_run',
     'market_signal.idx_monitor_runs_monitor_created',
     'market_signal.idx_monitor_runs_status_created',
+    'market_signal.idx_report_heads_subject_updated',
+    'market_signal.idx_report_heads_current_slug',
+    'market_signal.idx_query_aliases_target_type',
+    'market_signal.idx_query_aliases_report_key',
+    'market_signal.idx_query_aliases_asset_key',
   ];
 
   const startedAt = Date.now();

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, Clock3, Pencil, Plus, RefreshCw, Save, Siren, Zap } from 'lucide-react';
+import { Activity, Bell, Clock3, KeyRound, Pencil, Plus, RefreshCw, Save, Siren, Zap } from 'lucide-react';
 
 import { Link } from '@/i18n/navigation';
 import { apiPath, cn } from '@/lib/utils';
@@ -60,6 +60,7 @@ const CADENCE_OPTIONS = [
   { value: '360', label: '6h' },
   { value: '1440', label: '24h' },
 ] as const;
+const OPERATOR_TOKEN_STORAGE_KEY = 'trendanalysis:operator-token';
 
 function formatDate(value: string | null) {
   if (!value) return 'Never';
@@ -74,7 +75,16 @@ function scoreTone(value: number | null) {
   return 'teal';
 }
 
+function buildOperatorHeaders(operatorToken: string, contentType?: string) {
+  const headers: Record<string, string> = {};
+  if (contentType) headers['content-type'] = contentType;
+  if (operatorToken.trim()) headers['x-operator-token'] = operatorToken.trim();
+  return headers;
+}
+
 export function MonitorDashboard() {
+  const [operatorToken, setOperatorToken] = useState('');
+  const [operatorInput, setOperatorInput] = useState('');
   const [monitors, setMonitors] = useState<MonitorSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,11 +101,31 @@ export function MonitorDashboard() {
   const [mode, setMode] = useState<'fast' | 'deep'>('deep');
   const [cadenceMinutes, setCadenceMinutes] = useState<'15' | '60' | '360' | '1440'>('60');
   const [notifyWebhookUrl, setNotifyWebhookUrl] = useState('');
+  const operatorAuthorized = operatorToken.trim().length > 0;
 
   const selectedMonitor = useMemo(
     () => monitors.find((monitor) => monitor.id === selectedId) || null,
     [monitors, selectedId],
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.sessionStorage.getItem(OPERATOR_TOKEN_STORAGE_KEY) || '';
+    if (!saved) return;
+    setOperatorToken(saved);
+    setOperatorInput(saved);
+  }, []);
+
+  const persistOperatorToken = useCallback((nextToken: string) => {
+    setOperatorToken(nextToken);
+    setOperatorInput(nextToken);
+    if (typeof window === 'undefined') return;
+    if (nextToken) {
+      window.sessionStorage.setItem(OPERATOR_TOKEN_STORAGE_KEY, nextToken);
+      return;
+    }
+    window.sessionStorage.removeItem(OPERATOR_TOKEN_STORAGE_KEY);
+  }, []);
 
   const resetForm = useCallback(() => {
     setFormOpen(false);
@@ -124,10 +154,19 @@ export function MonitorDashboard() {
   }, []);
 
   const fetchMonitors = useCallback(async () => {
+    if (!operatorAuthorized) {
+      setMonitors([]);
+      setRuns([]);
+      setSelectedId(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(apiPath('/api/monitors'), { cache: 'no-store' });
+      const response = await fetch(apiPath('/api/monitors'), {
+        cache: 'no-store',
+        headers: buildOperatorHeaders(operatorToken),
+      });
       const json = await response.json();
       if (!response.ok) throw new Error(json?.error || 'Failed to load monitors');
       const items = (json?.monitors || []) as MonitorSummary[];
@@ -138,13 +177,20 @@ export function MonitorDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [operatorAuthorized, operatorToken]);
 
   const fetchRuns = useCallback(async (monitorId: string) => {
+    if (!operatorAuthorized) {
+      setRuns([]);
+      return;
+    }
     setDetailLoading(true);
     setDetailError(null);
     try {
-      const response = await fetch(apiPath(`/api/monitors/${monitorId}/runs?limit=12`), { cache: 'no-store' });
+      const response = await fetch(apiPath(`/api/monitors/${monitorId}/runs?limit=12`), {
+        cache: 'no-store',
+        headers: buildOperatorHeaders(operatorToken),
+      });
       const json = await response.json();
       if (!response.ok) throw new Error(json?.error || 'Failed to load monitor runs');
       setRuns((json?.runs || []) as MonitorRun[]);
@@ -154,18 +200,24 @@ export function MonitorDashboard() {
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [operatorAuthorized, operatorToken]);
 
   useEffect(() => {
+    if (!operatorAuthorized) return;
     void fetchMonitors();
-  }, [fetchMonitors]);
+  }, [fetchMonitors, operatorAuthorized]);
 
   useEffect(() => {
+    if (!operatorAuthorized) return;
     if (!selectedId) return;
     void fetchRuns(selectedId);
-  }, [fetchRuns, selectedId]);
+  }, [fetchRuns, operatorAuthorized, selectedId]);
 
   const saveMonitor = useCallback(async () => {
+    if (!operatorAuthorized) {
+      setError('Operator token required');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -190,7 +242,7 @@ export function MonitorDashboard() {
       const url = editingId ? apiPath(`/api/monitors/${editingId}`) : apiPath('/api/monitors');
       const response = await fetch(url, {
         method: editingId ? 'PATCH' : 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: buildOperatorHeaders(operatorToken, 'application/json'),
         body: JSON.stringify(payload),
       });
       const json = await response.json();
@@ -204,15 +256,19 @@ export function MonitorDashboard() {
     } finally {
       setSubmitting(false);
     }
-  }, [cadenceMinutes, editingId, fetchMonitors, mode, name, notifyWebhookUrl, resetForm, topic]);
+  }, [cadenceMinutes, editingId, fetchMonitors, mode, name, notifyWebhookUrl, operatorAuthorized, operatorToken, resetForm, topic]);
 
   const toggleActive = useCallback(async () => {
     if (!selectedMonitor) return;
+    if (!operatorAuthorized) {
+      setError('Operator token required');
+      return;
+    }
     setSubmitting(true);
     try {
       const response = await fetch(apiPath(`/api/monitors/${selectedMonitor.id}`), {
         method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
+        headers: buildOperatorHeaders(operatorToken, 'application/json'),
         body: JSON.stringify({ active: !selectedMonitor.active }),
       });
       const json = await response.json();
@@ -223,15 +279,20 @@ export function MonitorDashboard() {
     } finally {
       setSubmitting(false);
     }
-  }, [fetchMonitors, selectedMonitor]);
+  }, [fetchMonitors, operatorAuthorized, operatorToken, selectedMonitor]);
 
   const runMonitor = useCallback(async () => {
     if (!selectedMonitor) return;
+    if (!operatorAuthorized) {
+      setError('Operator token required');
+      return;
+    }
     setRunningNow(true);
     setError(null);
     try {
       const response = await fetch(apiPath(`/api/monitors/${selectedMonitor.id}/run`), {
         method: 'POST',
+        headers: buildOperatorHeaders(operatorToken),
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json?.error || 'Failed to queue monitor run');
@@ -241,7 +302,7 @@ export function MonitorDashboard() {
     } finally {
       setRunningNow(false);
     }
-  }, [fetchRuns, selectedMonitor]);
+  }, [fetchRuns, operatorAuthorized, operatorToken, selectedMonitor]);
 
   return (
     <div className="grid gap-5 lg:grid-cols-12">
@@ -253,21 +314,72 @@ export function MonitorDashboard() {
               <CardTitle>Monitors</CardTitle>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => void fetchMonitors()} disabled={loading}>
+              <Button variant="outline" size="sm" onClick={() => void fetchMonitors()} disabled={loading || !operatorAuthorized}>
                 <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
                 Refresh
               </Button>
-              <Button size="sm" onClick={openCreateForm}>
+              <Button size="sm" onClick={openCreateForm} disabled={!operatorAuthorized}>
                 <Plus className="h-4 w-4" />
                 New monitor
               </Button>
             </div>
           </CardHeader>
           <CardContent className="pt-0">
+            <Card className="mb-3 border-white/[0.08] bg-white/[0.03] p-3">
+              <div className="flex items-start gap-3">
+                <KeyRound className="mt-0.5 h-4 w-4 text-white/55" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-white/84">Operator token required</div>
+                  <p className="mt-1 text-xs leading-relaxed text-white/50">
+                    Monitor creation, scheduling, run dispatch, and history are operator-only control-plane actions.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <Input
+                  value={operatorInput}
+                  onChange={(event) => setOperatorInput(event.target.value)}
+                  type="password"
+                  placeholder="Paste operator token"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    persistOperatorToken(operatorInput.trim());
+                    setError(null);
+                    setDetailError(null);
+                  }}
+                  disabled={!operatorInput.trim()}
+                >
+                  Save token
+                </Button>
+                {operatorAuthorized ? (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      persistOperatorToken('');
+                      setMonitors([]);
+                      setRuns([]);
+                      setSelectedId(null);
+                      setError(null);
+                      setDetailError(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </div>
+            </Card>
             {error && (
               <Card className="mb-3 border-orange/25 bg-orange/[0.06] p-3 text-sm text-white/70">{error}</Card>
             )}
-            {!monitors.length && !loading ? (
+            {!operatorAuthorized ? (
+              <EmptyState
+                icon={<KeyRound className="h-8 w-8" />}
+                title="Monitor control plane locked"
+                description="Add a valid operator token to load monitor inventory, run history, and scheduling controls."
+              />
+            ) : !monitors.length && !loading ? (
               <EmptyState
                 icon={<Bell className="h-8 w-8" />}
                 title="No monitors yet"
@@ -404,25 +516,31 @@ export function MonitorDashboard() {
                 <CardTitle>{selectedMonitor?.name || 'Monitor detail'}</CardTitle>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => (selectedId ? void fetchRuns(selectedId) : null)} disabled={!selectedId || detailLoading}>
+                <Button variant="outline" size="sm" onClick={() => (selectedId ? void fetchRuns(selectedId) : null)} disabled={!selectedId || detailLoading || !operatorAuthorized}>
                   <RefreshCw className={cn('h-4 w-4', detailLoading ? 'animate-spin' : '')} />
                   Refresh
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => populateForm(selectedMonitor)} disabled={!selectedMonitor}>
+                <Button variant="outline" size="sm" onClick={() => populateForm(selectedMonitor)} disabled={!selectedMonitor || !operatorAuthorized}>
                   <Pencil className="h-4 w-4" />
                   Edit
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => void toggleActive()} disabled={!selectedMonitor || submitting}>
+                <Button variant="outline" size="sm" onClick={() => void toggleActive()} disabled={!selectedMonitor || submitting || !operatorAuthorized}>
                   {selectedMonitor?.active ? 'Pause' : 'Resume'}
                 </Button>
-                <Button size="sm" onClick={() => void runMonitor()} disabled={!selectedMonitor || runningNow}>
+                <Button size="sm" onClick={() => void runMonitor()} disabled={!selectedMonitor || runningNow || !operatorAuthorized}>
                   <Zap className="h-4 w-4" />
                   Run now
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              {!selectedMonitor ? (
+              {!operatorAuthorized ? (
+                <EmptyState
+                  icon={<KeyRound className="h-8 w-8" />}
+                  title="Operator token required"
+                  description="Provide a valid token on the left to inspect monitor state, latest alerts, and run history."
+                />
+              ) : !selectedMonitor ? (
                 <EmptyState
                   icon={<Bell className="h-8 w-8" />}
                   title="Select a monitor"

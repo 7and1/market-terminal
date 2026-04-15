@@ -1,10 +1,24 @@
-import createMiddleware from 'next-intl/middleware';
-import { routing } from './src/i18n/routing';
+import { NextRequest, NextResponse } from 'next/server';
 
-export default createMiddleware(routing);
+const LOCALES = new Set(['en', 'es', 'zh']);
+
+function hasLocalePrefix(pathname: string) {
+  const [, maybeLocale] = pathname.split('/');
+  return LOCALES.has(maybeLocale || '');
+}
+
+export default function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  if (hasLocalePrefix(pathname)) {
+    return NextResponse.next();
+  }
+
+  const rewritten = request.nextUrl.clone();
+  rewritten.pathname = `/en${pathname === '/' ? '' : pathname}`;
+  return NextResponse.rewrite(rewritten);
+}
 
 export const config = {
-  matcher: [
-    '/((?!api|_next|_vercel|.*\\..*).*)',
-  ],
+  matcher: ['/((?!api|_next|_vercel|.*\\..*).*)'],
 };

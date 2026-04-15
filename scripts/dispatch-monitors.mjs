@@ -19,6 +19,17 @@ function baseUrl() {
   return `http://127.0.0.1:${port}`;
 }
 
+function operatorHeaders() {
+  const token =
+    process.env.OPERATOR_TOKEN ||
+    process.env.TRENDANALYSIS_OPERATOR_TOKEN ||
+    process.env.MONITOR_OPERATOR_TOKEN ||
+    '';
+  const headers = {};
+  if (token) headers['x-operator-token'] = token;
+  return headers;
+}
+
 async function listDueMonitorIds(pool, limit) {
   const { rows } = await pool.query(
     `SELECT id
@@ -50,6 +61,7 @@ async function queueMonitor(base, monitorId) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
+      ...operatorHeaders(),
     },
     signal: AbortSignal.timeout(15_000),
   });

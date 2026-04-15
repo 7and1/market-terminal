@@ -13,13 +13,24 @@ import {
   now,
 } from '@/components/terminal/helpers';
 import type { GraphEdge, GraphNode } from '@/components/terminal/types';
-import { createEmptyTracePage, createEmptyUsageSummary } from '@/components/terminal/terminal-state';
+import {
+  buildPublishedReportPath,
+  createEmptyTracePage,
+  createEmptyUsageSummary,
+} from '@/components/terminal/terminal-state';
 import type { TerminalSharedState } from '@/components/terminal/hooks/useTerminalSharedState';
 import { assessMarketQueryScope } from '@/lib/market-query-scope';
+import { normalizeQueryLocale } from '@/lib/query-copy';
 import { apiPath } from '@/lib/utils';
 import { trackEvent } from '@/lib/analytics';
 import { asRecord, normalizePerformanceSummary } from '@/lib/session-data';
 import type { EvidenceItem, StoryCluster, TapeItem } from '@/lib/types';
+
+type StartRunOptions = {
+  reportKey?: string | null;
+  runReason?: 'direct' | 'refresh' | 'run_as_typed';
+  autoPublishOnReady?: boolean;
+};
 
 async function buildRunErrorMessage(response: Response) {
   const text = await response.text().catch(() => '');
@@ -56,11 +67,13 @@ async function buildRunErrorMessage(response: Response) {
 
 export function useTerminalRun({
   store,
+  locale,
   debugBrowserLogs,
   replaceUrlWithSessionId,
   resetInteractiveView,
 }: {
   store: TerminalSharedState;
+  locale: string;
   debugBrowserLogs: boolean;
   replaceUrlWithSessionId: (sessionId: string) => void;
   resetInteractiveView: () => void;
@@ -86,10 +99,15 @@ export function useTerminalRun({
   }, []);
 
   const start = useCallback(
-    async (rawTopic: string, question?: string) => {
+    async (rawTopic: string, question?: string, options?: StartRunOptions) => {
       const cleaned = rawTopic.trim() || 'Bitcoin';
       const cleanedQ = typeof question === 'string' ? question.trim() : '';
-      const scope = assessMarketQueryScope({ topic: cleaned, question: cleanedQ || undefined });
+      const normalizedLocale = normalizeQueryLocale(locale);
+      const scope = assessMarketQueryScope({
+        topic: cleaned,
+        question: cleanedQ || undefined,
+        locale: normalizedLocale,
+      });
       if (!scope.ok) {
         const examples = scope.supportedExamples.slice(0, 3).join(' | ');
         store.setWarnings((prev) => [scope.message, ...(examples ? [`Try: ${examples}`] : []), ...prev].slice(0, 4));
@@ -138,6 +156,8 @@ export function useTerminalRun({
 
       const startedAtLocal = now();
       const localId = `local_${Math.random().toString(16).slice(2)}`;
+      let resolvedSessionId = localId;
+      let didComplete = false;
       const { y, t } = buildSeries(startedAtLocal);
 
       store.setSession({
@@ -164,6 +184,9 @@ export function useTerminalRun({
           body: JSON.stringify({
             topic: cleaned,
             ...(cleanedQ ? { question: cleanedQ } : null),
+            locale: normalizedLocale,
+            ...(options?.reportKey ? { reportKey: options.reportKey } : null),
+            ...(options?.runReason ? { runReason: options.runReason } : null),
             mode: store.mode,
             serpFormat: 'light',
           }),
@@ -189,6 +212,7 @@ export function useTerminalRun({
               const serverMode: 'fast' | 'deep' = d.mode === 'deep' ? 'deep' : 'fast';
               const provider = typeof d.provider === 'string' ? d.provider : 'openrouter';
               const sessionId = typeof d.sessionId === 'string' ? d.sessionId : localId;
+              resolvedSessionId = sessionId;
               const serverTopic = typeof d.topic === 'string' ? d.topic : cleaned;
               const serverStartedAt = typeof d.startedAt === 'number' ? d.startedAt : startedAtLocal;
               const series = buildSeries(serverStartedAt);
@@ -470,11 +494,62 @@ export function useTerminalRun({
             }
 
             if (event === 'done') {
+              didComplete = true;
               store.setSession((prev) => (prev ? { ...prev, step: 'ready', progress: 1 } : prev));
               trackEvent('pipeline_complete', { topic: cleaned, mode: store.mode });
             }
           },
         });
+
+        if (
+          didComplete &&
+          options?.autoPublishOnReady &&
+          !abort.signal.aborted &&
+          runSeq === runSeqRef.current &&
+          isUuid(resolvedSessionId)
+        ) {
+          setPublishing(true);
+          try {
+            const publishRes = await fetch(apiPath('/api/sessions/publish'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: resolvedSessionId, locale: normalizedLocale }),
+            });
+            const data = asRecord(await publishRes.json().catch(() => ({})));
+            if (!publishRes.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Publish failed');
+            const slug = typeof data.slug === 'string' ? data.slug.trim() : '';
+            if (!slug) throw new Error('Missing published report slug');
+            const publishedLocale =
+              typeof data.locale === 'string' && data.locale.trim()
+                ? normalizeQueryLocale(data.locale)
+                : normalizedLocale;
+            const relativeUrl = buildPublishedReportPath(slug, publishedLocale);
+            const fullUrl = `${window.location.origin}${relativeUrl}`;
+            store.setPublishedReport({
+              slug,
+              locale: publishedLocale,
+              fullUrl,
+              relativeUrl,
+              alreadyPublished: Boolean(data.alreadyPublished),
+            });
+            const refreshSummary = typeof asRecord(data.refreshDiff).summary === 'string' ? String(asRecord(data.refreshDiff).summary) : '';
+            if (refreshSummary) {
+              store.setMessages((prev) => [
+                ...prev,
+                { id: `m_${Math.random().toString(16).slice(2)}`, role: 'assistant', content: `Refresh diff: ${refreshSummary}`, createdAt: now() },
+              ]);
+            }
+          } catch (publishError) {
+            const message = publishError instanceof Error ? publishError.message : 'Publish failed';
+            store.setWarnings((prev) => [message, ...prev].slice(0, 4));
+            store.setMessages((prev) => [
+              ...prev,
+              { id: `m_${Math.random().toString(16).slice(2)}`, role: 'assistant', content: message, createdAt: now() },
+            ]);
+          } finally {
+            setPublishing(false);
+          }
+        }
       } catch (e) {
         if (abort.signal.aborted) return;
         if (runSeq !== runSeqRef.current) return;
@@ -492,7 +567,7 @@ export function useTerminalRun({
         }
       }
     },
-    [debugBrowserLogs, replaceUrlWithSessionId, resetInteractiveView, store],
+    [debugBrowserLogs, locale, replaceUrlWithSessionId, resetInteractiveView, store],
   );
 
   const rerun = useCallback(() => {
@@ -515,18 +590,37 @@ export function useTerminalRun({
       const res = await fetch(apiPath('/api/sessions/publish'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: store.session.id }),
+        body: JSON.stringify({ sessionId: store.session.id, locale: normalizeQueryLocale(locale) }),
       });
       const data = asRecord(await res.json().catch(() => ({})));
       if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Publish failed');
-      const relativeUrl = typeof data.url === 'string' ? data.url : '';
-      if (!relativeUrl) throw new Error('Missing published report url');
+      const slug = typeof data.slug === 'string' ? data.slug.trim() : '';
+      if (!slug) throw new Error('Missing published report slug');
+      const publishedLocale =
+        typeof data.locale === 'string' && data.locale.trim()
+          ? normalizeQueryLocale(data.locale)
+          : normalizeQueryLocale(locale);
+      const relativeUrl = buildPublishedReportPath(slug, publishedLocale);
       const fullUrl = `${window.location.origin}${relativeUrl}`;
       store.setPublishedReport({
+        slug,
+        locale: publishedLocale,
         fullUrl,
         relativeUrl,
         alreadyPublished: Boolean(data.alreadyPublished),
       });
+      const refreshSummary = typeof asRecord(data.refreshDiff).summary === 'string' ? String(asRecord(data.refreshDiff).summary) : '';
+      if (refreshSummary) {
+        store.setMessages((prev) => [
+          ...prev,
+          {
+            id: `m_${Math.random().toString(16).slice(2)}`,
+            role: 'assistant',
+            content: `Refresh diff: ${refreshSummary}`,
+            createdAt: now(),
+          },
+        ]);
+      }
       try {
         await navigator.clipboard.writeText(fullUrl);
       } catch {
@@ -547,7 +641,7 @@ export function useTerminalRun({
     } finally {
       setPublishing(false);
     }
-  }, [store]);
+  }, [locale, store]);
 
   return {
     running,

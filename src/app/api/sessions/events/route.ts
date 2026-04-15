@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { hasDb, getSession, listEventsPage } from '@/lib/db';
 import { createLogger } from '@/lib/log';
+import { isAuthorizedSessionAccess } from '@/lib/session-write-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,6 +37,10 @@ export async function GET(request: Request) {
   }
 
   const { sessionId, limit, cursor } = parsed.data;
+  if (!isAuthorizedSessionAccess(request, sessionId)) {
+    log.warn('sessions.events.unauthorized', { sessionId, ms: Date.now() - startedAt });
+    return NextResponse.json({ error: 'Unauthorized session access' }, { status: 403 });
+  }
 
   const session = await getSession(sessionId);
   if (!session) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { Link, useRouter } from '@/i18n/navigation';
 import { useEffect, useState } from 'react';
 import {
@@ -19,16 +19,11 @@ import {
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
+import { QueryResolutionPanel, type QueryResolutionPanelState } from '@/components/query/QueryResolutionPanel';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/Button';
-import { assessMarketQueryScope } from '@/lib/market-query-scope';
-
-const LANDING_EXAMPLES = [
-  'Why is NVDA moving after earnings today?',
-  'BTC vs gold: which macro drivers matter more this week?',
-  'How are yields and the dollar affecting tech right now?',
-  'What policy catalysts are moving oil and energy equities?',
-] as const;
+import { getLandingExamples } from '@/lib/query-copy';
+import { apiPath } from '@/lib/utils';
 
 const SENTIMENT_DOT: Record<string, string> = {
   bullish: 'bg-emerald-400',
@@ -42,14 +37,40 @@ type TrendingTopic = {
   label: string;
   count: number;
   sentiment: string | null;
+  summary: string | null;
+  evidenceCount: number;
+  domainCount: number;
 };
 
 export default function LandingClient({ trendingTopics = [] }: { trendingTopics?: TrendingTopic[] }) {
   const router = useRouter();
+  const locale = useLocale();
   const t = useTranslations('landing');
   const tc = useTranslations('common');
+  const landingExamples = getLandingExamples(locale);
+  const flowSteps = [
+    {
+      step: '01',
+      title: t('flowQuestionTitle'),
+      description: t('flowQuestionDesc'),
+    },
+    {
+      step: '02',
+      title: t('flowResolveTitle'),
+      description: t('flowResolveDesc'),
+    },
+    {
+      step: '03',
+      title: t('flowRunTitle'),
+      description: t('flowRunDesc'),
+    },
+  ];
   const [query, setQuery] = useState('');
   const [typedHint, setTypedHint] = useState('');
+  const [activeExample, setActiveExample] = useState<string>(landingExamples[0] ?? '');
+  const [resolution, setResolution] = useState<QueryResolutionPanelState | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
   const [lastSessionId] = useState(() => {
     if (typeof window === 'undefined') return '';
     return window.localStorage.getItem('market_terminal:last_session_id') || '';
@@ -84,7 +105,8 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
 
     const tick = () => {
       if (stopped) return;
-      const phrase = LANDING_EXAMPLES[phraseIndex % LANDING_EXAMPLES.length];
+      const phrase = landingExamples[phraseIndex % landingExamples.length];
+      setActiveExample(phrase);
 
       if (!deleting) {
         charIndex = Math.min(phrase.length, charIndex + 1);
@@ -114,14 +136,67 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
       stopped = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [landingExamples, query]);
 
-  const runSearch = () => {
-    const cleaned = query.trim();
+  const buildTerminalUrl = ({
+    typedQuery,
+    reportKey,
+    runReason,
+  }: {
+    typedQuery: string;
+    reportKey?: string | null;
+    runReason: 'direct' | 'refresh' | 'run_as_typed';
+  }) => {
+    const params = new URLSearchParams({
+      q: typedQuery,
+      runAt: String(Date.now()),
+      runReason,
+    });
+    if (reportKey) params.set('reportKey', reportKey);
+    return `/terminal?${params.toString()}`;
+  };
+
+  const runSearch = async () => {
+    const cleaned = query.trim() || activeExample.trim();
     if (!cleaned) return;
-    const scope = assessMarketQueryScope({ topic: cleaned });
-    if (!scope.ok) return;
-    router.push(`/terminal?q=${encodeURIComponent(cleaned)}&runAt=${Date.now()}`);
+    setResolving(true);
+    setResolveError(null);
+    setResolution(null);
+    try {
+      const res = await fetch(apiPath('/api/query/resolve'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: cleaned, surface: 'landing', locale }),
+      });
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : t('resolveFailed'));
+
+      if (data.decision === 'reject') {
+        const message = typeof data.message === 'string' ? data.message : t('rejectFallback');
+        const examples = Array.isArray(data.supportedExamples)
+          ? data.supportedExamples.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 3)
+          : [];
+        setResolveError([message, examples.length ? t('tryExamples', { examples: examples.join(' | ') }) : ''].filter(Boolean).join(' '));
+        return;
+      }
+
+      if (data.decision === 'reuse' || data.decision === 'ambiguous' || data.decision === 'run_private') {
+        setResolution(data as QueryResolutionPanelState);
+        return;
+      }
+
+      router.push(
+        buildTerminalUrl({
+          typedQuery: cleaned,
+          reportKey: typeof data.reportKey === 'string' ? data.reportKey : null,
+          runReason: 'direct',
+        }),
+      );
+    } catch (error) {
+      setResolveError(error instanceof Error ? error.message : t('resolveFailed'));
+    } finally {
+      setResolving(false);
+    }
   };
 
   return (
@@ -155,6 +230,12 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
             <p className="mx-auto mt-4 max-w-[760px] text-sm text-white/66 sm:text-base">
               {t('heroDesc')}
             </p>
+            <div className="mx-auto mt-5 flex max-w-[760px] flex-wrap items-center justify-center gap-2 text-[11px] text-white/58">
+              <span className="rounded-full border border-[rgba(0,102,255,0.32)] bg-[rgba(0,102,255,0.1)] px-3 py-1 font-medium text-[rgba(199,228,255,0.94)]">
+                {t('heroQuestionLabel')}
+              </span>
+              <span>{t('heroQuestionHint')}</span>
+            </div>
 
             <form
               className="mx-auto mt-7 max-w-[860px] rounded-2xl border border-white/12 bg-black/20 p-2 sm:p-2.5"
@@ -168,15 +249,19 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
                   <Search className="h-4 w-4 shrink-0 text-white/46" />
                   <input
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setResolution(null);
+                      setResolveError(null);
+                    }}
                     placeholder={query.trim() ? t('searchPlaceholder') : typedHint || t('searchPlaceholder')}
-                    className="h-11 w-full border-0 bg-transparent text-sm text-white/90 outline-none placeholder:text-white/42"
-                    aria-label="Search topic"
+                    className="h-11 w-full border-0 bg-transparent text-sm text-white/90 outline-none placeholder:text-white/42 focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-0"
+                    aria-label={t('searchAriaLabel')}
                   />
                 </div>
                 <Button
                   type="submit"
-                  disabled={!query.trim()}
+                  disabled={resolving || (!query.trim() && !activeExample.trim())}
                   size="lg"
                   className="border-[rgba(0,102,255,0.42)] bg-[rgba(0,102,255,0.2)] text-[rgba(199,228,255,0.98)] hover:bg-[rgba(0,102,255,0.28)]"
                 >
@@ -186,17 +271,85 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
               </div>
             </form>
 
+            {resolution ? (
+              <QueryResolutionPanel
+                resolution={resolution}
+                className="mx-auto mt-4 max-w-[860px] text-left"
+                onDismiss={() => setResolution(null)}
+                onRunAsTyped={(next) =>
+                  router.push(
+                    buildTerminalUrl({
+                      typedQuery: next.typedQuery,
+                      runReason: 'run_as_typed',
+                    }),
+                  )
+                }
+                onRunPrivate={(next) =>
+                  router.push(
+                    buildTerminalUrl({
+                      typedQuery: next.typedQuery,
+                      runReason: 'direct',
+                    }),
+                  )
+                }
+                onScrapeAgain={(next) =>
+                  router.push(
+                    buildTerminalUrl({
+                      typedQuery: next.typedQuery,
+                      reportKey: next.reuseType === 'report' ? next.currentReport?.reportKey : null,
+                      runReason: 'refresh',
+                    }),
+                  )
+                }
+              />
+            ) : null}
+            {resolveError ? (
+              <div className="mx-auto mt-4 max-w-[860px] rounded-2xl border border-[rgba(255,190,125,0.25)] bg-[rgba(255,190,125,0.06)] px-4 py-3 text-left text-sm text-[rgba(255,212,170,0.92)]">
+                {resolveError}
+              </div>
+            ) : null}
+
+            <div className="mx-auto mt-4 grid max-w-[860px] gap-2 text-left sm:grid-cols-3">
+              {flowSteps.map((item) => (
+                <div
+                  key={item.step}
+                  className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[rgba(182,220,255,0.72)]">
+                    {item.step}
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-white/86">{item.title}</div>
+                  <p className="mt-1 text-xs leading-relaxed text-white/56">{item.description}</p>
+                </div>
+              ))}
+            </div>
+
             <div className="mx-auto mt-3 max-w-[860px] text-left text-[11px] leading-relaxed text-white/48 sm:text-center">
-              Use asset, sector, macro, or policy questions only. Generic prompts like weather, travel, or everyday
-              Q&amp;A are outside this workflow.
+              {t('marketOnlyHint')}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-white/52">
+              <span>{t('publicRoutesLabel')}</span>
+              <Link
+                href="/trending"
+                className="font-medium text-[var(--blue)] transition hover:text-white/82"
+              >
+                {t('hubReportsCta')}
+              </Link>
+              <span className="text-white/20">&middot;</span>
+              <Link
+                href="/asset"
+                className="font-medium text-[var(--blue)] transition hover:text-white/82"
+              >
+                {t('hubAssetsCta')}
+              </Link>
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-              {LANDING_EXAMPLES.map((example) => (
+              {landingExamples.map((example) => (
                 <button
                   key={example}
                   type="button"
-                  className="inline-flex h-8 items-center rounded-full border border-white/12 bg-white/[0.03] px-3 text-xs text-white/66 transition hover:bg-white/[0.06] hover:text-white/84"
+                  className="inline-flex h-8 items-center rounded-full border border-white/12 bg-white/[0.03] px-3 text-xs text-white/66 transition hover:bg-white/[0.06] hover:text-white/84 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgba(4,10,24,0.92)]"
                   onClick={() => setQuery(example)}
                 >
                   {example}
@@ -205,7 +358,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
               {lastSessionId ? (
                 <button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-full border border-[rgba(0,102,255,0.32)] bg-[rgba(0,102,255,0.14)] px-3 text-xs text-[rgba(199,228,255,0.96)] transition hover:bg-[rgba(0,102,255,0.22)]"
+                  className="inline-flex h-8 items-center rounded-full border border-[rgba(0,102,255,0.32)] bg-[rgba(0,102,255,0.14)] px-3 text-xs text-[rgba(199,228,255,0.96)] transition hover:bg-[rgba(0,102,255,0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgba(4,10,24,0.92)]"
                   onClick={() => router.push(`/terminal?sessionId=${encodeURIComponent(lastSessionId)}`)}
                 >
                   {t('resumeLastSession')}
@@ -213,19 +366,28 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
               ) : null}
             </div>
 
+            <div className="mt-9 text-left sm:text-center">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
+                {t('continueTitle')}
+              </div>
+              <p className="mx-auto mt-2 max-w-[680px] text-sm leading-relaxed text-white/58">
+                {t('continueDesc')}
+              </p>
+            </div>
+
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
               <Card className="p-4 text-left">
                 <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
-                  {t('hubAssetsTitle')}
+                  {t('terminalCardTitle')}
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-white/56">
-                  {t('hubAssetsDesc')}
+                  {t('terminalCardDesc')}
                 </p>
                 <Link
-                  href="/asset"
+                  href="/terminal"
                   className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--blue)] transition hover:text-white/82"
                 >
-                  {t('hubAssetsCta')} <ArrowUpRight className="h-3.5 w-3.5" />
+                  {t('terminalCardCta')} <ArrowUpRight className="h-3.5 w-3.5" />
                 </Link>
               </Card>
 
@@ -246,16 +408,16 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
 
               <Card className="p-4 text-left">
                 <div className="text-xs font-semibold uppercase tracking-[0.12em] text-white/42">
-                  Stay in terminal
+                  {t('hubAssetsTitle')}
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-white/56">
-                  Start a fresh run, revisit a stored snapshot, or monitor the same setup again when the evidence changes.
+                  {t('hubAssetsDesc')}
                 </p>
                 <Link
-                  href="/terminal"
+                  href="/asset"
                   className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--blue)] transition hover:text-white/82"
                 >
-                  Open terminal <ArrowUpRight className="h-3.5 w-3.5" />
+                  {t('hubAssetsCta')} <ArrowUpRight className="h-3.5 w-3.5" />
                 </Link>
               </Card>
             </div>
@@ -273,18 +435,36 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
                     {tc('viewAll')} &rarr;
                   </Link>
                 </div>
-                <div className="flex flex-wrap items-center justify-center gap-2">
+                <p className="mx-auto mb-3 max-w-[680px] text-center text-xs leading-relaxed text-white/52">
+                  {t('trendingNowDesc')}
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {trendingTopics.map((tt) => (
                     <Link
                       key={tt.assetKey}
                       href={`/asset/${tt.assetKey}`}
-                      className="inline-flex h-8 items-center gap-2 rounded-full border border-white/12 bg-white/[0.03] px-3 text-xs text-white/66 transition hover:bg-white/[0.06] hover:text-white/84"
+                      className="block"
                     >
-                      {tt.sentiment && (
-                        <span className={`h-1.5 w-1.5 rounded-full ${SENTIMENT_DOT[tt.sentiment] ?? SENTIMENT_DOT.neutral}`} />
-                      )}
-                      {tt.label.charAt(0).toUpperCase() + tt.label.slice(1)}
-                      <span className="text-white/30">{tt.count}</span>
+                      <Card className="h-full p-4 text-left transition hover:border-white/20 hover:bg-white/[0.06]">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-sm font-semibold text-white/86">
+                            {tt.label.charAt(0).toUpperCase() + tt.label.slice(1)}
+                          </div>
+                          {tt.sentiment ? (
+                            <span className={`mt-1 h-2 w-2 rounded-full ${SENTIMENT_DOT[tt.sentiment] ?? SENTIMENT_DOT.neutral}`} />
+                          ) : null}
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed text-white/54">
+                          {tt.summary || t('trendingFallbackSummary')}
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-white/42">
+                          <span>{tt.count} {t('trendingAnalysesLabel')}</span>
+                          <span className="text-white/20">&middot;</span>
+                          <span>{tt.evidenceCount} {t('trendingEvidenceLabel')}</span>
+                          <span className="text-white/20">&middot;</span>
+                          <span>{tt.domainCount} {t('trendingDomainsLabel')}</span>
+                        </div>
+                      </Card>
                     </Link>
                   ))}
                 </div>
@@ -341,15 +521,15 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
                 <div className="mt-3 space-y-2">
                   <div className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.04] px-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/80" />
-                    <span className="text-[9px] text-white/50 truncate">Bitcoin Market Analysis</span>
+                    <span className="text-[9px] text-white/50 truncate">{t('reportSample1')}</span>
                   </div>
                   <div className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-400/80" />
-                    <span className="text-[9px] text-white/50 truncate">NVDA Earnings Impact</span>
+                    <span className="text-[9px] text-white/50 truncate">{t('reportSample2')}</span>
                   </div>
                   <div className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.025] px-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-[var(--blue)]" />
-                    <span className="text-[9px] text-white/50 truncate">AI Healthcare Trends</span>
+                    <span className="text-[9px] text-white/50 truncate">{t('reportSample3')}</span>
                   </div>
                 </div>
               </Card>

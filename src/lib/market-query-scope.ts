@@ -1,3 +1,5 @@
+import { getMarketOnlyExamples, normalizeQueryLocale } from '@/lib/query-copy';
+
 const MARKET_TERMS = [
   'market',
   'markets',
@@ -122,13 +124,6 @@ const OFF_DOMAIN_PATTERNS: Array<{ reason: OffDomainReason; test: RegExp }> = [
   },
 ] as const;
 
-const MARKET_ONLY_EXAMPLES = [
-  'Why is BTC down today?',
-  'What moved NVDA after earnings?',
-  'How are yields affecting gold right now?',
-  'Will tomorrow weather affect natural gas prices?',
-] as const;
-
 export type OffDomainReason =
   | 'weather'
   | 'travel'
@@ -162,7 +157,45 @@ function includesAny(text: string, terms: readonly string[]) {
   return terms.some((term) => text.includes(term));
 }
 
-function offDomainMessage(reason: OffDomainReason) {
+function offDomainMessage(reason: OffDomainReason, locale?: string) {
+  const normalizedLocale = normalizeQueryLocale(locale);
+
+  if (normalizedLocale === 'zh') {
+    switch (reason) {
+      case 'weather':
+        return '这个工作区用于市场研究，不提供独立天气预报。请改成询问天气对某个资产、商品或板块的影响。';
+      case 'travel':
+        return '这个工作区用于市场研究，不提供旅行规划。请把问题改成围绕某个资产、公司、板块或宏观主题。';
+      case 'food':
+        return '这个工作区用于市场研究，不提供餐饮或菜谱问答。请改问会影响市场的话题。';
+      case 'translation':
+        return '这个工作区用于市场研究，不提供翻译或写作润色。请改问聚焦市场的研究问题。';
+      case 'personal_assistant':
+        return '这个工作区用于市场研究，不处理个人助理类任务。请改问资产、板块、宏观主题或会影响市场的事件。';
+      case 'general_knowledge':
+      default:
+        return '这个工作区用于市场研究，不提供通用知识查询。请改问资产、板块、宏观主题、政策变化或会影响市场的事件。';
+    }
+  }
+
+  if (normalizedLocale === 'es') {
+    switch (reason) {
+      case 'weather':
+        return 'Este espacio es para investigación de mercado, no para pronósticos meteorológicos aislados. Pregunta por el impacto del clima sobre un activo, commodity o sector.';
+      case 'travel':
+        return 'Este espacio es para investigación de mercado, no para planificar viajes. Reformula la consulta alrededor de un activo, empresa, sector o tema macro.';
+      case 'food':
+        return 'Este espacio es para investigación de mercado, no para preguntas de comida o restaurantes. Pregunta por un tema que mueva el mercado.';
+      case 'translation':
+        return 'Este espacio es para investigación de mercado, no para traducción o ayuda de redacción. Haz una pregunta enfocada en mercado.';
+      case 'personal_assistant':
+        return 'Este espacio es para investigación de mercado, no para tareas de asistente personal. Pregunta por un activo, sector, tema macro o evento que mueva el mercado.';
+      case 'general_knowledge':
+      default:
+        return 'Este espacio es para investigación de mercado, no para consultas generales. Pregunta por un activo, sector, tema macro, cambio de política o evento que mueva el mercado.';
+    }
+  }
+
   switch (reason) {
     case 'weather':
       return 'This workspace is for market research, not standalone weather forecasts. Ask about a weather impact on an asset, commodity, or sector instead.';
@@ -183,18 +216,21 @@ function offDomainMessage(reason: OffDomainReason) {
 export function assessMarketQueryScope({
   topic,
   question,
+  locale,
 }: {
   topic: string;
   question?: string;
+  locale?: string;
 }): QueryScopeAssessment {
   const haystack = normalize(`${topic} ${question || ''}`);
+  const supportedExamples = getMarketOnlyExamples(locale);
   if (!haystack) {
     return {
       ok: false,
       scope: 'off_domain',
       reason: 'general_knowledge',
-      message: offDomainMessage('general_knowledge'),
-      supportedExamples: MARKET_ONLY_EXAMPLES,
+      message: offDomainMessage('general_knowledge', locale),
+      supportedExamples,
     };
   }
 
@@ -209,8 +245,8 @@ export function assessMarketQueryScope({
         ok: false,
         scope: 'off_domain',
         reason: pattern.reason,
-        message: offDomainMessage(pattern.reason),
-        supportedExamples: MARKET_ONLY_EXAMPLES,
+        message: offDomainMessage(pattern.reason, locale),
+        supportedExamples,
       };
     }
   }

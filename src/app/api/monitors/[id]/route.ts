@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { getMonitor, hasDb, toPublicMonitor, updateMonitor, type MonitorCadenceMinutes } from '@/lib/db';
 import { createLogger } from '@/lib/log';
+import { getOperatorAccessIssue } from '@/lib/operator-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +27,12 @@ export async function PATCH(
 ) {
   const reqId = crypto.randomUUID();
   const log = createLogger({ reqId, route: '/api/monitors/[id]' });
+
+  const accessIssue = getOperatorAccessIssue(request);
+  if (accessIssue) {
+    log.warn('monitors.patch.unauthorized', { status: accessIssue.status });
+    return NextResponse.json({ error: accessIssue.error }, { status: accessIssue.status });
+  }
 
   if (!hasDb()) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 400 });

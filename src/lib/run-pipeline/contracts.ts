@@ -62,6 +62,9 @@ export type EvidenceItemsWithScrapeMeta = EvidenceItem[] & {
 export const RunRequestSchema = z.object({
   topic: z.string().trim().min(1),
   question: z.string().trim().optional(),
+  locale: z.string().trim().min(2).max(10).optional(),
+  reportKey: z.string().trim().min(1).optional(),
+  runReason: z.enum(['direct', 'refresh', 'run_as_typed']).optional().default('direct'),
   mode: z.enum(['fast', 'deep']).optional().default('fast'),
   serpFormat: z.enum(['light', 'full', 'markdown']).optional(),
   provider: z.enum(['openrouter']).optional(),

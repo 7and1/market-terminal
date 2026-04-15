@@ -89,7 +89,7 @@ export async function executeRun({
 
   if (dbReady) {
     try {
-      await createSession(sessionId, body.topic, 'running', 'plan', 0.05, baseMeta);
+      await createSession(sessionId, body.topic, 'running', 'plan', 0.05, baseMeta, body.reportKey || null);
       log.info('run.db.session_inserted', { sessionId });
     } catch {
       log.warn('run.db.session_insert_failed', { sessionId });
@@ -255,6 +255,9 @@ export async function executeRun({
   await emit('session', {
     sessionId,
     topic: body.topic,
+    locale: body.locale || null,
+    reportKey: body.reportKey || null,
+    runReason: body.runReason,
     startedAt,
     mode: body.mode,
     provider,

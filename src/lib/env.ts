@@ -22,6 +22,10 @@ function envBool(name: string, fallback = false): boolean {
 }
 
 export const env = {
+  features: {
+    queryResolution: envBool('ENABLE_QUERY_RESOLUTION', true),
+    queryResolutionTieBreaker: envBool('ENABLE_QUERY_RESOLUTION_TIEBREAKER', false),
+  },
   brightdata: {
     token: envString('BRIGHTDATA_API_TOKEN') || envString('API_TOKEN'),
     zone:

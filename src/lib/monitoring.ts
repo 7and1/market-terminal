@@ -20,7 +20,10 @@ import {
 } from '@/lib/db';
 import { createLogger } from '@/lib/log';
 import { selectStageModel } from '@/lib/modelRouting';
+import { promoteReadySessionToPublicHead } from '@/lib/publish-session';
 import { type SessionArtifacts, type SessionMeta, asSessionMeta, evidenceItems, getArtifacts } from '@/lib/session-data';
+import { getCanonicalHeadByKey } from '@/lib/topic-catalog';
+import { deriveTopicVisibility } from '@/lib/topic-resolution';
 import type { EvidenceItem } from '@/lib/types';
 import { type RunRequest } from '@/lib/run-pipeline/contracts';
 import { executeRun } from '@/lib/run-pipeline/execute';
@@ -167,7 +170,7 @@ function fallbackMonitorDiff(topic: string, currentMeta: SessionMeta, baselineMe
   };
 }
 
-async function buildMonitorDiffSummary({
+export async function buildSessionDiffSummary({
   topic,
   currentMeta,
   baselineMeta,
@@ -252,11 +255,79 @@ async function deliverMonitorWebhook({
 function buildRunRequest(monitor: MonitorRow, monitorRunId: string): RunRequest {
   return {
     topic: monitor.topic,
+    runReason: 'direct',
     mode: monitor.mode,
     runIntent: 'monitor',
     monitorId: monitor.id,
     monitorRunId,
   };
+}
+
+function shouldAutoPromoteMonitorTopic(topic: string) {
+  const visibility = deriveTopicVisibility(topic);
+  const head = getCanonicalHeadByKey(visibility.subjectKey);
+  return visibility.visibility === 'public' && Boolean(head?.seedEnabled && head.priorityTier === 'v1');
+}
+
+async function maybeAutoPromoteMonitorSession({
+  claim,
+  currentSession,
+  sessionId,
+  logger,
+}: {
+  claim: ClaimedMonitorRun;
+  currentSession: NonNullable<Awaited<ReturnType<typeof getSession>>>;
+  sessionId: string;
+  logger: Logger;
+}): Promise<string | null> {
+  if (!shouldAutoPromoteMonitorTopic(claim.monitor.topic)) return null;
+
+  try {
+    const promotion = await promoteReadySessionToPublicHead(currentSession);
+    if (promotion.ok) {
+      let refreshDiff: MonitorDiffSummary | null = null;
+      if (promotion.previousHead?.currentSessionId && promotion.previousHead.currentSessionId !== currentSession.sessionId) {
+        const baselineSession = await getSession(promotion.previousHead.currentSessionId);
+        if (baselineSession) {
+          refreshDiff = await buildSessionDiffSummary({
+            topic: promotion.canonicalLabel,
+            currentMeta: asSessionMeta(currentSession.meta),
+            baselineMeta: asSessionMeta(baselineSession.meta),
+          });
+          await patchMeta(sessionId, {
+            refreshDiff: {
+              ...refreshDiff,
+              previousSessionId: baselineSession.sessionId,
+            },
+          });
+        }
+      }
+
+      logger.info('monitor.auto_promote.ok', {
+        monitorId: claim.monitor.id,
+        sessionId,
+        slug: promotion.slug,
+        reportKey: promotion.reportKey,
+        refreshSummary: refreshDiff?.summary || null,
+      });
+      return `/report/${promotion.slug}`;
+    }
+
+    logger.info('monitor.auto_promote.skipped', {
+      monitorId: claim.monitor.id,
+      sessionId,
+      code: promotion.code,
+      status: promotion.status,
+    });
+    return null;
+  } catch (error) {
+    logger.error('monitor.auto_promote.failed', {
+      monitorId: claim.monitor.id,
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 export async function executeClaimedMonitorRun({
@@ -297,7 +368,7 @@ export async function executeClaimedMonitorRun({
 
   const currentMeta = asSessionMeta(currentSession?.meta);
   const baselineMeta = baselineSession ? asSessionMeta(baselineSession.meta) : null;
-  const summary = await buildMonitorDiffSummary({
+  const summary = await buildSessionDiffSummary({
     topic: claim.monitor.topic,
     currentMeta,
     baselineMeta,
@@ -309,7 +380,15 @@ export async function executeClaimedMonitorRun({
   };
   const significant = baselineSessionId ? finalSummary.changeScore >= 70 : false;
 
-  const reportUrl = currentSession?.slug ? `/report/${currentSession.slug}` : null;
+  const promotedReportUrl = currentSession
+    ? await maybeAutoPromoteMonitorSession({
+        claim,
+        currentSession,
+        sessionId: result.sessionId,
+        logger,
+      })
+    : null;
+  const reportUrl = promotedReportUrl || (currentSession?.slug ? `/report/${currentSession.slug}` : null);
   const deliveryError = significant
     ? await deliverMonitorWebhook({
         monitor: claim.monitor,
@@ -355,6 +434,7 @@ export async function executeClaimedMonitorRun({
     lastReadySessionId: result.sessionId,
     lastChangeScore: finalSummary.changeScore,
   });
+
   if (significant && !deliveryError) {
     await markMonitorAlertSent(claim.monitor.id);
   }

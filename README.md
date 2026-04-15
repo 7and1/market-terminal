@@ -2,7 +2,12 @@
 
 Evidence-first market research built with Next.js 16, React 19, Bright Data, OpenRouter, and PostgreSQL.
 
-The app takes a market topic or question, runs a multi-stage retrieval pipeline, and streams results into a terminal-style workspace with evidence, graph, timeline, media, and chat panels. Public report and asset pages are rendered from the same stored session data for SEO.
+The app takes a market topic or question, runs a multi-stage retrieval pipeline, and streams results into a terminal-style workspace with evidence, graph, timeline, media, and chat panels. Public report and asset pages now read through a shared public projection layer backed by stored session data.
+
+Product contract and operating docs:
+
+- `docs/product-contract.md`
+- `docs/public-ops.md`
 
 ## Current Architecture
 
@@ -42,6 +47,7 @@ Required variables:
 - `BRIGHTDATA_SERP_ZONE`
 - `OPENROUTER_API_KEY`
 - `DATABASE_URL`
+- `OPERATOR_TOKEN` for monitor/control-plane APIs
 
 ## Validation
 
@@ -52,6 +58,7 @@ npm run lint
 npm run typecheck
 npm run test
 npm run build
+npm run build:cf
 ```
 
 The test suite runs on Vitest and now covers core backend libraries plus route behavior for `run`, `chat`, `health`, and session pagination endpoints.
@@ -77,6 +84,7 @@ Important routes:
 - `POST /api/chat`: grounded follow-up questions for a stored session
 - `GET /api/health`: config status; add `?probe=1` to actively test DB, DB schema/indexes, AI, and Bright Data connectivity
 - `GET /api/sessions`, `/api/sessions/events`, `/api/sessions/snapshot`: dashboard and replay data
+- `GET/POST/PATCH /api/monitors*`: operator-only monitor control plane protected by `OPERATOR_TOKEN`
 
 ## Deployment
 
@@ -98,6 +106,7 @@ npm run cleanup:sessions
 ```
 
 The VPS deploy workflow now applies `schema.sql` inside the running container and installs a cron entry that runs session TTL cleanup every 30 minutes.
+That cleanup now removes stale unpublished non-ready runs only, while completed unpublished sessions remain available as private history.
 
 Recommended production verification after deploy:
 
@@ -106,4 +115,20 @@ docker exec market-terminal node scripts/apply-schema.mjs
 docker exec market-terminal node scripts/cleanup-expired-sessions.mjs
 crontab -l | grep cleanup-expired-sessions.mjs
 curl "https://your-host/api/health?probe=1"
+```
+
+OpenClaw preview validation:
+
+```bash
+OPENCLAW_PREVIEW_URL="https://preview.example.com" \
+bash scripts/openclaw-validate.sh
+```
+
+Optional end-to-end publish validation:
+
+```bash
+OPENCLAW_PREVIEW_URL="https://preview.example.com" \
+OPENCLAW_SAMPLE_QUERY="Why is BTC moving today?" \
+OPENCLAW_RUN_PUBLISH=1 \
+bash scripts/openclaw-validate.sh
 ```

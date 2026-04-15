@@ -73,6 +73,7 @@ describe('/api/run POST', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.resetModules();
+    delete process.env.TRUST_PROXY_HEADERS;
     hasBrightData.mockReturnValue(false);
     hasDb.mockReturnValue(false);
     getAIConfig.mockReturnValue(null);
@@ -115,6 +116,29 @@ describe('/api/run POST', () => {
       error: 'Off-domain query',
       code: 'OFF_DOMAIN_QUERY',
       scope: 'market-only',
+    });
+  });
+
+  it('returns localized off-domain guidance when locale is provided', async () => {
+    const { POST } = await import('@/app/api/run/route');
+    const response = await POST(
+      new Request('http://localhost/api/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ topic: '明天的天气怎么样？', locale: 'zh' }),
+      }),
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'OFF_DOMAIN_QUERY',
+      message: '这个工作区用于市场研究，不提供独立天气预报。请改成询问天气对某个资产、商品或板块的影响。',
+      supportedExamples: [
+        '为什么 BTC 今天下跌？',
+        '是什么推动了 NVDA 财报后的走势？',
+        '收益率现在如何影响黄金？',
+        '明天的天气会影响天然气价格吗？',
+      ],
     });
   });
 
@@ -175,5 +199,51 @@ describe('/api/run POST', () => {
     expect(eventNames).toContain('perf.summary');
     expect(eventNames).toContain('error');
     expect(eventNames.indexOf('perf.summary')).toBeLessThan(eventNames.indexOf('error'));
+  });
+
+  it('rate limits repeated requests and returns limit headers', async () => {
+    process.env.TRUST_PROXY_HEADERS = 'true';
+    const { POST } = await import('@/app/api/run/route');
+    const makeRequest = () =>
+      new Request('http://localhost/api/run', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '203.0.113.10',
+        },
+        body: JSON.stringify({ topic: 'What is the weather tomorrow in New York?' }),
+      });
+
+    for (let idx = 0; idx < 10; idx += 1) {
+      const response = await POST(makeRequest());
+      expect(response.status).toBe(422);
+      expect(response.headers.get('x-ratelimit-limit')).toBe('10');
+    }
+
+    const blocked = await POST(makeRequest());
+    expect(blocked.status).toBe(429);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: 'Too many requests',
+    });
+    expect(blocked.headers.get('retry-after')).toBeTruthy();
+    expect(blocked.headers.get('x-ratelimit-remaining')).toBe('0');
+  });
+
+  it('rejects refresh requests whose report head does not match the typed topic', async () => {
+    const { POST } = await import('@/app/api/run/route');
+    const response = await POST(
+      new Request('http://localhost/api/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          topic: 'Gold vs Ethereum today',
+          runReason: 'refresh',
+          reportKey: 'bitcoin-price-move',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.text()).resolves.toContain('Invalid refresh target');
   });
 });
