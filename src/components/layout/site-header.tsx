@@ -187,6 +187,7 @@ function LanguageSwitcher({
         <Button
           variant="ghost"
           size="icon"
+          data-testid="locale-switcher-trigger"
           className="h-8 w-8 text-white/50 hover:text-white/80"
         >
           <Globe className="h-3.5 w-3.5" />
@@ -200,6 +201,7 @@ function LanguageSwitcher({
               <Link
                 href={pathname}
                 locale={l}
+                data-testid={`locale-link-${l}`}
                 className={cn(
                   'cursor-pointer',
                   l === locale && 'font-bold',

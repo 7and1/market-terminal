@@ -132,3 +132,34 @@ OPENCLAW_SAMPLE_QUERY="Why is BTC moving today?" \
 OPENCLAW_RUN_PUBLISH=1 \
 bash scripts/openclaw-validate.sh
 ```
+
+Repo-owned preview entrypoint for OpenClaw:
+
+```bash
+OPENCLAW_RUNTIME_ENV_FILE=".env.preview-runtime.fixed" \
+OPENCLAW_PORT=3218 \
+bash scripts/openclaw-preview.sh
+```
+
+Minimal browser harness against a running preview:
+
+```bash
+OPENCLAW_PREVIEW_URL="http://127.0.0.1:3218" \
+OPENCLAW_REPORT_SLUG="bitcoin-price-move-2026-04-14-1e3c" \
+bash scripts/openclaw-browser-validate.sh
+```
+
+Minimal browser harness with full-chain report derivation:
+
+```bash
+OPENCLAW_PREVIEW_URL="http://127.0.0.1:3218" \
+OPENCLAW_SAMPLE_QUERY="Why is BTC moving today?" \
+OPENCLAW_RUN_PUBLISH=1 \
+bash scripts/openclaw-browser-validate.sh
+```
+
+If Playwright Chromium is not installed yet on OpenClaw, bootstrap it once:
+
+```bash
+npm run test:browser:install
+```
