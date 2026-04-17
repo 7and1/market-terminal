@@ -55,7 +55,18 @@ if [[ ! -f ".next/standalone/server.js" ]]; then
   exit 1
 fi
 
+standalone_root=".next/standalone"
+mkdir -p "${standalone_root}/.next"
+
+# Mirror the Docker runner layout so CSS/JS chunks and public assets resolve
+# when the standalone server is launched from the repo workspace.
+ln -sfn "${repo_root}/.next/static" "${standalone_root}/.next/static"
+if [[ -d "${repo_root}/public" ]]; then
+  ln -sfn "${repo_root}/public" "${standalone_root}/public"
+fi
+
 printf 'OPENCLAW_PREVIEW_TARGET=http://%s:%s\n' "$HOSTNAME" "$PORT"
 printf 'OPENCLAW_PREVIEW_HEALTH=http://%s:%s/api/health\n' "$HOSTNAME" "$PORT"
 
-exec node .next/standalone/server.js
+cd "${standalone_root}"
+exec node server.js
