@@ -53,7 +53,7 @@ export function MediaPanel({
   const t = useTranslations('workspace');
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between gap-3 border-b border-white/[0.08]">
+      <CardHeader className="items-start justify-between gap-3 border-b border-white/[0.08] sm:flex-row">
         <div className="flex items-center gap-2">
           <Video className="h-4 w-4 text-white/80" />
           <div>
@@ -62,12 +62,12 @@ export function MediaPanel({
           </div>
         </div>
         {session ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="hidden items-center rounded-full border border-white/10 bg-white/[0.03] p-1 text-[11px] text-white/60 sm:flex">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+            <div className="flex w-full items-center rounded-full border border-white/10 bg-white/[0.03] p-1 text-[11px] text-white/60 sm:w-auto">
               <button
                 type="button"
                 className={cn(
-                  'rounded-full px-3 py-1 transition',
+                  'flex-1 rounded-full px-3 py-1 transition sm:flex-none',
                   videoAutoPoll ? 'text-white/55 hover:text-white/75' : 'bg-white/10 text-white/80',
                 )}
                 onClick={() => onVideoAutoPollChange(false)}
@@ -77,7 +77,7 @@ export function MediaPanel({
               <button
                 type="button"
                 className={cn(
-                  'rounded-full px-3 py-1 transition',
+                  'flex-1 rounded-full px-3 py-1 transition sm:flex-none',
                   videoAutoPoll ? 'bg-white/10 text-white/80' : 'text-white/55 hover:text-white/75',
                 )}
                 onClick={() => onVideoAutoPollChange(true)}

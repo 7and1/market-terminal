@@ -4,7 +4,7 @@ set -euo pipefail
 : "${OPENCLAW_PREVIEW_URL:?OPENCLAW_PREVIEW_URL is required}"
 
 artifact_dir="${OPENCLAW_ARTIFACT_DIR:-./.codex-results/openclaw-validate}"
-sample_query="${OPENCLAW_SAMPLE_QUERY:-Why is BTC moving today?}"
+sample_query="${OPENCLAW_SAMPLE_QUERY:-What changed in NVDA earnings expectations today?}"
 mkdir -p "$artifact_dir"
 
 base_url="${OPENCLAW_PREVIEW_URL%/}"
@@ -25,7 +25,13 @@ curl -fsS \
   --data @"$artifact_dir/query.resolve.request.json" \
   "${base_url}/api/query/resolve" >"$artifact_dir/query.resolve.json"
 
-curl -fsS "${base_url}/api/health?probe=1" >"$artifact_dir/health.probe.json"
+if [[ -n "${OPERATOR_TOKEN:-}" ]]; then
+  curl -fsS \
+    -H "x-operator-token: ${OPERATOR_TOKEN}" \
+    "${base_url}/api/health?probe=1" >"$artifact_dir/health.probe.json"
+else
+  printf '{"ok":false,"skipped":true,"error":"OPERATOR_TOKEN missing"}\n' >"$artifact_dir/health.probe.json"
+fi
 
 if [[ "${OPENCLAW_RUN_PUBLISH:-0}" != "1" ]]; then
   exit 0

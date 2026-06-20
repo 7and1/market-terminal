@@ -12,6 +12,14 @@ export type SubjectDefinition = {
   defaultCadenceMinutes: 15 | 60 | 360 | 1440;
   priceContextSupport: 'native' | 'proxy' | 'unsupported';
   defaultSeedQuery: string;
+  searchHints?: TopicSearchHints;
+};
+
+export type TopicSearchHints = {
+  domainKeywords?: string[];
+  knownActors?: string[];
+  preferredDomains?: string[];
+  impactKeywords?: string[];
 };
 
 export type ComparisonDefinition = {
@@ -60,6 +68,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'native',
     defaultSeedQuery: 'Why is BTC moving today? Map the strongest catalysts in the last 24 hours.',
+    searchHints: {
+      domainKeywords: ['bitcoin', 'btc', 'crypto', 'etf', 'sec', 'miners', 'mstr', 'microstrategy', 'funding', 'coinbase'],
+      knownActors: ['SEC', 'BlackRock', 'Grayscale', 'Coinbase', 'MicroStrategy', 'Michael Saylor'],
+      preferredDomains: ['coindesk', 'theblock', 'decrypt', 'cointelegraph'],
+      impactKeywords: ['bitcoin', 'btc', 'crypto', 'etf', 'sec', 'miners', 'mstr', 'microstrategy', 'coinbase', 'funding'],
+    },
   },
   {
     key: 'ethereum',
@@ -73,6 +87,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'native',
     defaultSeedQuery: 'Why is ETH moving today? Identify the main market and macro drivers in the last 24 hours.',
+    searchHints: {
+      domainKeywords: ['ethereum', 'eth', 'crypto', 'etf', 'staking', 'defi', 'sec'],
+      knownActors: ['SEC', 'BlackRock', 'Grayscale', 'Coinbase', 'Ethereum Foundation'],
+      preferredDomains: ['coindesk', 'theblock', 'decrypt', 'cointelegraph'],
+      impactKeywords: ['ethereum', 'eth', 'crypto', 'etf', 'staking', 'defi', 'sec'],
+    },
   },
   {
     key: 'solana',
@@ -86,6 +106,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 1440,
     priceContextSupport: 'native',
     defaultSeedQuery: 'Why is SOL moving today? Track catalysts, ecosystem headlines, and cross-crypto read-through.',
+    searchHints: {
+      domainKeywords: ['solana', 'sol', 'crypto', 'etf', 'defi', 'ecosystem', 'memecoin'],
+      knownActors: ['Solana Foundation', 'Coinbase', 'Binance', 'SEC'],
+      preferredDomains: ['coindesk', 'theblock', 'decrypt', 'cointelegraph'],
+      impactKeywords: ['solana', 'sol', 'crypto', 'ecosystem', 'defi', 'etf'],
+    },
   },
   {
     key: 'gold',
@@ -99,6 +125,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'proxy',
     defaultSeedQuery: 'Why is gold moving today? Focus on yields, the dollar, safe-haven demand, and inflation signals.',
+    searchHints: {
+      domainKeywords: ['gold', 'xau', 'inflation', 'real yields', 'dollar', 'safe haven', 'central bank'],
+      knownActors: ['Federal Reserve', 'US Treasury', 'World Gold Council'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com'],
+      impactKeywords: ['gold', 'xau', 'real yields', 'inflation', 'dollar', 'safe haven'],
+    },
   },
   {
     key: 'oil',
@@ -112,6 +144,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'unsupported',
     defaultSeedQuery: 'Why is oil moving today? Track supply, geopolitics, OPEC, and dollar-linked macro drivers.',
+    searchHints: {
+      domainKeywords: ['oil', 'wti', 'brent', 'opec', 'supply', 'inventory', 'geopolitics'],
+      knownActors: ['OPEC', 'IEA', 'EIA'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com'],
+      impactKeywords: ['oil', 'wti', 'brent', 'opec', 'inventory', 'geopolitics', 'supply'],
+    },
   },
   {
     key: 'dxy',
@@ -125,6 +163,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'unsupported',
     defaultSeedQuery: 'Why is DXY moving today? Focus on rates, Fed pricing, and cross-asset transmission.',
+    searchHints: {
+      domainKeywords: ['dxy', 'dollar', 'usd', 'fed', 'rates', 'treasury yields', 'inflation'],
+      knownActors: ['Federal Reserve', 'US Treasury'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com'],
+      impactKeywords: ['dxy', 'dollar', 'usd', 'rates', 'treasury', 'fed'],
+    },
   },
   {
     key: 'nvda',
@@ -138,6 +182,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'unsupported',
     defaultSeedQuery: 'Why is NVDA moving today? Track earnings, AI demand, semis read-through, and policy risk.',
+    searchHints: {
+      domainKeywords: ['nvidia', 'nvda', 'ai', 'data center', 'semiconductor', 'earnings', 'guidance', 'export controls'],
+      knownActors: ['Nvidia', 'TSMC', 'Microsoft', 'OpenAI'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com', 'theinformation'],
+      impactKeywords: ['nvidia', 'nvda', 'ai', 'semiconductor', 'data center', 'earnings'],
+    },
   },
   {
     key: 'aapl',
@@ -164,6 +214,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'unsupported',
     defaultSeedQuery: 'Why is TSLA moving today? Track delivery expectations, EV competition, policy, and risk sentiment.',
+    searchHints: {
+      domainKeywords: ['tesla', 'tsla', 'deliveries', 'ev', 'margins', 'robotaxi', 'policy'],
+      knownActors: ['Tesla', 'Elon Musk'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com'],
+      impactKeywords: ['tesla', 'tsla', 'deliveries', 'ev', 'margins', 'robotaxi'],
+    },
   },
   {
     key: 'msft',
@@ -255,6 +311,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 360,
     priceContextSupport: 'unsupported',
     defaultSeedQuery: 'How are rates moving today, and what is the strongest read-through to equities, gold, and the dollar?',
+    searchHints: {
+      domainKeywords: ['rates', 'fed', 'fomc', 'treasury yields', 'inflation', 'cpi', 'jobs'],
+      knownActors: ['Federal Reserve', 'US Treasury'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com'],
+      impactKeywords: ['rates', 'fed', 'fomc', 'treasury', 'yield', 'inflation', 'cpi'],
+    },
   },
   {
     key: 'yields',
@@ -320,6 +382,12 @@ export const SUBJECT_DEFINITIONS = [
     defaultCadenceMinutes: 1440,
     priceContextSupport: 'unsupported',
     defaultSeedQuery: 'What is moving semis right now? Focus on AI demand, policy headlines, and supplier read-through.',
+    searchHints: {
+      domainKeywords: ['semiconductors', 'chips', 'ai demand', 'export controls', 'tsmc', 'asml', 'memory'],
+      knownActors: ['Nvidia', 'TSMC', 'ASML', 'AMD', 'Broadcom'],
+      preferredDomains: ['reuters', 'bloomberg', 'cnbc', 'ft.com', 'wsj.com'],
+      impactKeywords: ['semiconductor', 'chips', 'ai demand', 'export controls', 'tsmc', 'asml'],
+    },
   },
   {
     key: 'energy',
@@ -362,7 +430,7 @@ export const SUBJECT_DEFINITIONS = [
   },
 ] as const satisfies readonly SubjectDefinition[];
 
-export const SUBJECT_BY_KEY = new Map<string, (typeof SUBJECT_DEFINITIONS)[number]>(
+export const SUBJECT_BY_KEY = new Map<string, SubjectDefinition>(
   SUBJECT_DEFINITIONS.map((item) => [item.key, item] as const),
 );
 
@@ -571,6 +639,31 @@ function dedupeAliases(groups: Array<readonly string[] | undefined>): string[] {
   return out;
 }
 
+function normalizeTopicLookup(raw: string): string {
+  return String(raw || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function topicContainsAlias(topic: string, alias: string): boolean {
+  const normalizedTopic = ` ${normalizeTopicLookup(topic)} `;
+  const normalizedAlias = normalizeTopicLookup(alias);
+  return Boolean(normalizedAlias) && normalizedTopic.includes(` ${normalizedAlias} `);
+}
+
+function mergeSearchHints(hints: Array<TopicSearchHints | undefined>): TopicSearchHints | null {
+  const domainKeywords = dedupeAliases(hints.map((hint) => hint?.domainKeywords));
+  const knownActors = dedupeAliases(hints.map((hint) => hint?.knownActors));
+  const preferredDomains = dedupeAliases(hints.map((hint) => hint?.preferredDomains));
+  const impactKeywords = dedupeAliases(hints.map((hint) => hint?.impactKeywords));
+
+  if (!domainKeywords.length && !knownActors.length && !preferredDomains.length && !impactKeywords.length) return null;
+  return {
+    ...(domainKeywords.length ? { domainKeywords } : {}),
+    ...(knownActors.length ? { knownActors } : {}),
+    ...(preferredDomains.length ? { preferredDomains } : {}),
+    ...(impactKeywords.length ? { impactKeywords } : {}),
+  };
+}
+
 export function getSubjectAliases(subject: SubjectDefinition, locale?: string): string[] {
   const normalizedLocale = locale?.toLowerCase().startsWith('zh')
     ? 'zh'
@@ -587,6 +680,33 @@ export function getSubjectAliases(subject: SubjectDefinition, locale?: string): 
     localized?.es,
     normalizedLocale ? localized?.[normalizedLocale] : undefined,
   ]);
+}
+
+export function findSubjectForTopic(topic: string): SubjectDefinition | null {
+  const normalizedTopic = normalizeTopicLookup(topic);
+  if (!normalizedTopic) return null;
+
+  for (const subject of SUBJECT_DEFINITIONS) {
+    const aliases = [subject.key, subject.assetKey, subject.label, ...subject.aliases];
+    if (aliases.some((alias) => topicContainsAlias(topic, alias))) return { ...subject };
+  }
+
+  return null;
+}
+
+export function getTopicSearchHints(topic: string): TopicSearchHints | null {
+  for (const comparison of COMPARISON_DEFINITIONS) {
+    const aliases = [comparison.key, comparison.label, ...comparison.aliases, ...comparison.aliasesZh];
+    if (!aliases.some((alias) => topicContainsAlias(topic, alias))) continue;
+    const primary = SUBJECT_BY_KEY.get(comparison.primarySubjectKey);
+    const secondary = SUBJECT_BY_KEY.get(comparison.secondarySubjectKey);
+    return mergeSearchHints([primary?.searchHints, secondary?.searchHints]);
+  }
+
+  const subject = findSubjectForTopic(topic);
+  if (subject?.searchHints) return { ...subject.searchHints };
+
+  return null;
 }
 
 export function getComparisonAliases(comparison: ComparisonDefinition, locale?: string): string[] {

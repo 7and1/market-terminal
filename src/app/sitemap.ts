@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { listCurrentPublished, listPublished } from '@/lib/db';
+import { listAssetArchiveDates, listCurrentPublished, listPublished } from '@/lib/db';
 import { filterPublishableSessions, summarizeSessionQuality } from '@/lib/report-quality';
 import { isSeededAssetKey, isSeededCanonicalHeadKey } from '@/lib/topic-catalog';
 
@@ -37,7 +37,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   try {
     const published = filterPublishableSessions(await listPublished(5000));
-    const currentPublished = (await listCurrentPublished(5000)).filter((item) => summarizeSessionQuality(item.session).publishable);
+    const [currentPublished, archiveDates] = await Promise.all([
+      listCurrentPublished(5000).then((items) => items.filter((item) => summarizeSessionQuality(item.session).publishable)),
+      listAssetArchiveDates(5000).catch(() => []),
+    ]);
 
     const reportPages: MetadataRoute.Sitemap = currentPublished
       .filter((item) => isSeededCanonicalHeadKey(item.head.subjectKey))
@@ -52,8 +55,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const assetPages: MetadataRoute.Sitemap = Array.from(assetKeys).sort((a, b) => a.localeCompare(b)).map((key) =>
       localizedEntry(baseUrl, `/asset/${key}`, 'daily', 0.7),
     );
+    const archivePages: MetadataRoute.Sitemap = archiveDates
+      .filter((item) => item.assetKey && item.metricDate)
+      .filter((item) => isSeededAssetKey(item.assetKey))
+      .sort((a, b) => a.assetKey.localeCompare(b.assetKey) || b.metricDate.localeCompare(a.metricDate))
+      .map((item) => localizedEntry(baseUrl, `/asset/${item.assetKey}/archive/${item.metricDate}`, 'weekly', 0.45));
 
-    return [...staticPages, ...reportPages, ...assetPages];
+    return [...staticPages, ...reportPages, ...assetPages, ...archivePages];
   } catch {
     return staticPages;
   }

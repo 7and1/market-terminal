@@ -49,14 +49,15 @@ describe('robots', () => {
     });
   });
 
-  it('blocks internal and supporting control-plane surfaces from crawl', () => {
+  it('blocks internal control-plane surfaces from crawl while allowing noindex support pages to be read', () => {
     const result = robots();
     const disallow = Array.isArray(result.rules) ? result.rules[0]?.disallow || [] : [];
 
     expect(disallow).toContain('/api/');
     expect(disallow).toContain('/dashboard');
     expect(disallow).toContain('/terminal');
-    expect(disallow).toContain('/tools');
+    expect(disallow).not.toContain('/tools');
+    expect(disallow).not.toContain('/zh/tools');
     expect(disallow).toContain('/en/dashboard');
     expect(disallow).toContain('/zh/terminal');
     expect(result.sitemap).toContain('/sitemap.xml');
@@ -96,7 +97,7 @@ describe('robots', () => {
     expect(metadata.title).toBe('Report not found');
   });
 
-  it('canonicalizes superseded reports to the current public slug and keeps them noindex', async () => {
+  it('keeps superseded publishable reports self-canonical and indexable', async () => {
     getPublishedReportBySlug.mockResolvedValue({
       isCurrent: false,
       head: {
@@ -135,10 +136,7 @@ describe('robots', () => {
       params: Promise.resolve({ locale: 'en', slug: 'bitcoin-price-move-old' }),
     });
 
-    expect(metadata.alternates?.canonical).toBe('https://trendanalysis.ai/report/bitcoin-price-move-current');
-    expect(metadata.robots).toEqual({
-      index: false,
-      follow: true,
-    });
+    expect(metadata.alternates?.canonical).toBe('https://trendanalysis.ai/report/bitcoin-price-move-old');
+    expect(metadata.robots).toBeUndefined();
   });
 });

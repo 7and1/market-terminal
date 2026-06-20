@@ -9,6 +9,7 @@ import {
   getLatestReadyMonitorRun,
   getMonitor,
   getSession,
+  listConfirmedSubscribersByAsset,
   markMonitorAlertSent,
   markMonitorRunRunning,
   patchMeta,
@@ -18,6 +19,7 @@ import {
   type MonitorRow,
   type MonitorRunRow,
 } from '@/lib/db';
+import { isSubscriptionEmailConfigured, sendMonitorAlertEmail } from '@/lib/email';
 import { createLogger } from '@/lib/log';
 import { selectStageModel } from '@/lib/modelRouting';
 import { promoteReadySessionToPublicHead } from '@/lib/publish-session';
@@ -252,6 +254,44 @@ async function deliverMonitorWebhook({
   }
 }
 
+async function deliverSubscriberEmails({
+  assetKey,
+  reportUrl,
+  summary,
+}: {
+  assetKey: string | null | undefined;
+  reportUrl: string | null;
+  summary: MonitorDiffSummary;
+}): Promise<string | null> {
+  if (!assetKey || !summary.changeScore || summary.changeScore < 70 || !isSubscriptionEmailConfigured()) return null;
+
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const subscribers = await listConfirmedSubscribersByAsset(assetKey).catch(() => []);
+  if (!subscribers.length) return null;
+
+  const fullReportUrl = reportUrl ? `${baseUrl}${reportUrl.startsWith('/') ? reportUrl : `/${reportUrl}`}` : null;
+  const failures: string[] = [];
+  await Promise.all(
+    subscribers.map(async (subscriber) => {
+      const unsubscribeUrl = `${baseUrl}/api/subscribe/unsubscribe?hash=${encodeURIComponent(subscriber.tokenHash)}`;
+      try {
+        await sendMonitorAlertEmail({
+          to: subscriber.email,
+          assetKey,
+          headline: summary.headline,
+          summary: summary.summary,
+          reportUrl: fullReportUrl,
+          unsubscribeUrl,
+        });
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }),
+  );
+
+  return failures.length ? `Subscriber email failed for ${failures.length} recipient(s): ${failures[0]}` : null;
+}
+
 function buildRunRequest(monitor: MonitorRow, monitorRunId: string): RunRequest {
   return {
     topic: monitor.topic,
@@ -397,8 +437,16 @@ export async function executeClaimedMonitorRun({
         summary: finalSummary,
       })
     : null;
-  if (deliveryError) {
-    finalSummary.deliveryError = deliveryError;
+  const subscriberDeliveryError = significant
+    ? await deliverSubscriberEmails({
+        assetKey: currentSession?.assetKey || deriveTopicVisibility(claim.monitor.topic).assetKey,
+        reportUrl,
+        summary: finalSummary,
+      })
+    : null;
+  const combinedDeliveryError = [deliveryError, subscriberDeliveryError].filter(Boolean).join('; ');
+  if (combinedDeliveryError) {
+    finalSummary.deliveryError = combinedDeliveryError;
   }
 
   await patchMeta(result.sessionId, {
@@ -411,7 +459,7 @@ export async function executeClaimedMonitorRun({
       sentimentShift: finalSummary.sentimentShift,
       newEvidence: finalSummary.newEvidence,
       newCatalysts: finalSummary.newCatalysts,
-      ...(deliveryError ? { deliveryError } : {}),
+      ...(combinedDeliveryError ? { deliveryError: combinedDeliveryError } : {}),
     },
   });
 
@@ -426,7 +474,7 @@ export async function executeClaimedMonitorRun({
       sentimentShift: finalSummary.sentimentShift,
       newEvidence: finalSummary.newEvidence,
       newCatalysts: finalSummary.newCatalysts,
-      ...(deliveryError ? { deliveryError } : {}),
+      ...(combinedDeliveryError ? { deliveryError: combinedDeliveryError } : {}),
     },
   });
   await updateMonitorCheckpoint({
@@ -435,7 +483,7 @@ export async function executeClaimedMonitorRun({
     lastChangeScore: finalSummary.changeScore,
   });
 
-  if (significant && !deliveryError) {
+  if (significant && !combinedDeliveryError) {
     await markMonitorAlertSent(claim.monitor.id);
   }
 }

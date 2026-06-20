@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/Input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { OPERATOR_TOKEN_STORAGE_KEY, buildOperatorHeaders } from '@/components/dashboard/operator-auth-client';
 
 type MonitorSummary = {
   id: string;
@@ -60,8 +61,6 @@ const CADENCE_OPTIONS = [
   { value: '360', label: '6h' },
   { value: '1440', label: '24h' },
 ] as const;
-const OPERATOR_TOKEN_STORAGE_KEY = 'trendanalysis:operator-token';
-
 function formatDate(value: string | null) {
   if (!value) return 'Never';
   const date = new Date(value);
@@ -73,13 +72,6 @@ function scoreTone(value: number | null) {
   if (value >= 70) return 'orange';
   if (value >= 35) return 'blue';
   return 'teal';
-}
-
-function buildOperatorHeaders(operatorToken: string, contentType?: string) {
-  const headers: Record<string, string> = {};
-  if (contentType) headers['content-type'] = contentType;
-  if (operatorToken.trim()) headers['x-operator-token'] = operatorToken.trim();
-  return headers;
 }
 
 export function MonitorDashboard() {

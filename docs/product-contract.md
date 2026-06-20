@@ -97,4 +97,4 @@ Control-plane path:
 
 - Public pages read through a shared projection layer instead of hand-built page-specific database joins.
 - Canonical, alternate, robots, sitemap, and historical report behavior are consistent.
-- Preview validation can check `/api/health?probe=1`, query resolution, and optionally `run -> publish -> report`.
+- Preview validation can check `/api/health?probe=1` with operator auth, query resolution, and optionally `run -> publish -> report`.

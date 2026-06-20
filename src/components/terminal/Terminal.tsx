@@ -28,6 +28,7 @@ export function Terminal() {
   const searchParams = useSearchParams();
   const locale = useLocale();
   const t = useTranslations('terminal');
+  const workspaceT = useTranslations('workspace');
   const store = useTerminalSharedState();
   const {
     topic,
@@ -174,6 +175,7 @@ export function Terminal() {
       setTypedTopicHint('');
       return;
     }
+    if (typedExamples.length === 0) return;
     let stopped = false;
     let timer: number | null = null;
     let phraseIndex = 0;
@@ -372,7 +374,7 @@ export function Terminal() {
       videosInFlightRef.current = true;
       setVideosLoading(true);
       try {
-        const res = await fetch(apiPath(`/api/videos?topic=${encodeURIComponent(cleaned)}&limit=6`), { cache: 'no-store' });
+        const res = await fetch(apiPath(`/api/videos?topic=${encodeURIComponent(cleaned)}&limit=6&locale=${encodeURIComponent(locale)}`), { cache: 'no-store' });
         const data = (await res.json()) as VideosResponse;
         setVideos(data);
         store.setSession((prev) => (prev ? { ...prev, videosSnapshot: data } : prev));
@@ -387,13 +389,13 @@ export function Terminal() {
         });
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Video fetch failed';
-        setVideos({ topic: cleaned, fetchedAt: now(), mode: 'mock', items: [], error: message });
+        setVideos({ topic: cleaned, fetchedAt: now(), mode: 'unavailable', items: [], error: message });
       } finally {
         videosInFlightRef.current = false;
         setVideosLoading(false);
       }
     },
-    [appendTimeline, persistSnapshot, setVideos, store],
+    [appendTimeline, locale, persistSnapshot, setVideos, store],
   );
 
   const fetchPriceData = useCallback(async (query: string): Promise<PriceResponse> => {
@@ -580,8 +582,14 @@ export function Terminal() {
     if (!selectedEdgeId) return;
     const edge = session.edges.find((item) => item.id === selectedEdgeId);
     if (!edge) return;
-    openEvidence(`Edge: ${edge.type.replace(/_/g, ' ')} (${Math.round(edge.confidence * 100)}%)`, edge.evidenceIds, edge.rationale || null);
-  }, [openEvidence, selectedEdgeId, session]);
+    const evidenceIds = edge.evidenceIds || [];
+    const structuralNote = evidenceIds.length ? null : workspaceT('inferredEdgeNoEvidence');
+    openEvidence(
+      `Edge: ${edge.type.replace(/_/g, ' ')} (${Math.round(edge.confidence * 100)}%)`,
+      evidenceIds,
+      edge.rationale || structuralNote,
+    );
+  }, [openEvidence, selectedEdgeId, session, workspaceT]);
 
   useEffect(() => {
     if (replay.snapshotReadOnly) return;
@@ -844,7 +852,7 @@ export function Terminal() {
             />
           </div>
         ) : null}
-        <div className={cn('grid gap-5', chatPanelOpen ? 'xl:grid-cols-[minmax(0,1fr)_400px]' : 'grid-cols-1')}>
+        <div className={cn('grid items-start gap-5', chatPanelOpen ? 'xl:grid-cols-[minmax(0,1fr)_400px]' : 'grid-cols-1')}>
           <div className="min-w-0 space-y-5">
             <WorkspacePanel
               isEmpty={isEmpty}
@@ -932,47 +940,49 @@ export function Terminal() {
           </div>
 
           {chatPanelOpen ? (
-            <ChatPanel
-              session={session}
-              running={running}
-              chatMode={chatMode}
-              chatInput={chatInput}
-              messages={messages}
-              mentionState={mentionState}
-              showChatSuggestions={showChatSuggestions}
-              plan={plan}
-              search={search}
-              queryQueue={queryQueue}
-              scrapeQueue={scrapeQueue}
-              evidenceSources={(session?.evidence ?? []).map((item) => item.source)}
-              evidenceCount={session?.evidence?.length ?? 0}
-              summariesCount={summariesCount}
-              nodesCount={workspaceGraph.nodes.length}
-              edgesCount={workspaceGraph.edges.length}
-              clustersCount={session?.clusters?.length ?? 0}
-              warningsCount={warnings.length}
-              graphVariant={graphVariant}
-              terminalMode={terminalMode}
-              usageSummary={usageSummary}
-              perfSummary={perfSummary}
-              referenceContext={referenceContext}
-              traceLoadedCount={trace?.events.length ?? 0}
-              traceHasMore={tracePage.hasMore}
-              traceLoadingMore={traceLoadingMore}
-              mode={mode}
-              runMeta={runMeta}
-              onChatModeChange={setChatMode}
-              onChatInputChange={setChatInput}
-              onClose={() => setChatPanelOpen(false)}
-              onRunChat={runChat}
-              onAskWithContext={(query) => void askWithContext(query)}
-              onMentionSelect={(item) => setChatInput((prev) => prev.replace(/@([a-zA-Z0-9_-]*)$/, `@${item} `))}
-              onOpenTrace={() => setTraceOpen(true)}
-              onLoadMoreTrace={() => {
-                if (session?.id) void replay.fetchTrace(session.id, { append: true });
-              }}
-              renderMessageContent={renderMessageContent}
-            />
+            <div className="min-w-0 self-start xl:sticky xl:top-4">
+              <ChatPanel
+                session={session}
+                running={running}
+                chatMode={chatMode}
+                chatInput={chatInput}
+                messages={messages}
+                mentionState={mentionState}
+                showChatSuggestions={showChatSuggestions}
+                plan={plan}
+                search={search}
+                queryQueue={queryQueue}
+                scrapeQueue={scrapeQueue}
+                evidenceSources={(session?.evidence ?? []).map((item) => item.source)}
+                evidenceCount={session?.evidence?.length ?? 0}
+                summariesCount={summariesCount}
+                nodesCount={workspaceGraph.nodes.length}
+                edgesCount={workspaceGraph.edges.length}
+                clustersCount={session?.clusters?.length ?? 0}
+                warningsCount={warnings.length}
+                graphVariant={graphVariant}
+                terminalMode={terminalMode}
+                usageSummary={usageSummary}
+                perfSummary={perfSummary}
+                referenceContext={referenceContext}
+                traceLoadedCount={trace?.events.length ?? 0}
+                traceHasMore={tracePage.hasMore}
+                traceLoadingMore={traceLoadingMore}
+                mode={mode}
+                runMeta={runMeta}
+                onChatModeChange={setChatMode}
+                onChatInputChange={setChatInput}
+                onClose={() => setChatPanelOpen(false)}
+                onRunChat={runChat}
+                onAskWithContext={(query) => void askWithContext(query)}
+                onMentionSelect={(item) => setChatInput((prev) => prev.replace(/@([a-zA-Z0-9_-]*)$/, `@${item} `))}
+                onOpenTrace={() => setTraceOpen(true)}
+                onLoadMoreTrace={() => {
+                  if (session?.id) void replay.fetchTrace(session.id, { append: true });
+                }}
+                renderMessageContent={renderMessageContent}
+              />
+            </div>
           ) : null}
         </div>
       </main>

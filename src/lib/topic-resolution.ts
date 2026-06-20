@@ -3,12 +3,14 @@ import { z } from 'zod';
 import { chatJson, getAIConfig } from '@/lib/ai';
 import {
   getReportHead,
+  listApprovedDynamicCatalogHeads,
   listPublished,
   listCurrentPublished,
   listQueryAliases,
   updateSessionReportKey,
   upsertQueryAlias,
   upsertReportHead,
+  type DynamicCatalogHeadRow,
   type QueryAliasRow,
   type QueryAliasSource,
   type QueryAliasTargetType,
@@ -130,6 +132,108 @@ const COMPARISON_EQUIVALENT_SUBJECT_KEYS: Partial<Record<string, readonly string
   yields: ['rates'],
 };
 
+const MACRO_CONTEXT_SUBJECT_KEYS = new Set(['rates', 'yields', 'fed', 'cpi', 'tariffs', 'dxy']);
+const POLICY_LENS_PRICE_MOVE_SUBJECT_KEYS = new Set(['fed']);
+
+function escapeRegex(raw: string) {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function anchoredSubjectIndex(normalizedInput: string, subjectKey: string, locale?: string): number | null {
+  const subject = SUBJECT_BY_KEY.get(subjectKey);
+  if (!subject) return null;
+  const intentRe =
+    /\b(moving|moved|move|down|up|drawdown|selloff|rally|why|explain|cae|sube|mueve|movimiento|impact|drivers|read\s+through|readthrough)\b|波动|下跌|上涨|影响|原因|为什么/;
+  if (!intentRe.test(normalizedInput)) return null;
+
+  let bestIndex: number | null = null;
+  for (const rawAlias of getSubjectAliases(subject, locale)) {
+    const alias = normalizeText(rawAlias);
+    if (!alias) continue;
+    const aliasRe = escapeRegex(alias);
+    const patterns = [
+      new RegExp(`^(why|what|how)\\s+(is\\s+|are\\s+)?(the\\s+latest\\s+)?${aliasRe}\\b`),
+      new RegExp(`^(por\\s+que|como)\\s+(es\\s+|esta\\s+)?(lo\\s+ultimo\\s+)?${aliasRe}\\b`),
+      new RegExp(`^${aliasRe}\\b`),
+      new RegExp(`\\b${aliasRe}\\s+(moving|moved|move|impact|drivers|read\\s+through|readthrough)\\b`),
+    ];
+    for (const pattern of patterns) {
+      const match = normalizedInput.match(pattern);
+      if (!match || match.index == null) continue;
+      bestIndex = bestIndex == null ? match.index : Math.min(bestIndex, match.index);
+    }
+  }
+
+  return bestIndex;
+}
+
+function isAnchoredSubjectQuery(normalizedInput: string, subjectKey: string, locale?: string) {
+  return anchoredSubjectIndex(normalizedInput, subjectKey, locale) != null;
+}
+
+function findAnchoredPrimaryMatch(normalizedInput: string, locale?: string) {
+  let best:
+    | {
+        index: number;
+        match: {
+          key: string;
+          label: string;
+          assetKey: string;
+          alias: string;
+        };
+      }
+    | null = null;
+
+  for (const subject of SUBJECT_DEFINITIONS) {
+    const index = anchoredSubjectIndex(normalizedInput, subject.key, locale);
+    if (index == null) continue;
+    const match = {
+      key: subject.key,
+      label: subject.label,
+      assetKey: subject.assetKey,
+      alias: getSubjectAliases(subject, locale)[0] || subject.key,
+    };
+    if (!best || index < best.index) {
+      best = { index, match };
+    }
+  }
+  return best?.match || null;
+}
+
+function findLeadingSubjectMatch(normalizedInput: string, locale?: string) {
+  const prefixes = [
+    '',
+    'why is ',
+    'what is ',
+    'what is the latest ',
+    'how is ',
+    'how are ',
+    'why ',
+    'por que ',
+    'como ',
+  ];
+
+  for (const subject of SUBJECT_DEFINITIONS) {
+    for (const rawAlias of getSubjectAliases(subject, locale)) {
+      const alias = normalizeText(rawAlias);
+      if (!alias) continue;
+      for (const prefix of prefixes) {
+        const target = `${prefix}${alias}`;
+        if (normalizedInput === target || normalizedInput.startsWith(`${target} `)) {
+          return {
+            key: subject.key,
+            label: subject.label,
+            assetKey: subject.assetKey,
+            alias: getSubjectAliases(subject, locale)[0] || subject.key,
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export type ResolverSurface = 'landing' | 'terminal';
 
 export type QueryResolveReject = {
@@ -237,6 +341,10 @@ type AssetCandidate = {
   id: string;
   label: string;
   assetKey: string;
+  reportKey?: string | null;
+  publicSurface?: 'asset_hub' | 'report';
+  priorityTier?: 'v1' | 'secondary';
+  dynamic?: boolean;
   latestReport?: ReportCandidate;
   updatedAt: number;
 };
@@ -394,6 +502,22 @@ function comparisonSubjectVariants(subjectKey: string) {
   return [subjectKey, ...(COMPARISON_EQUIVALENT_SUBJECT_KEYS[subjectKey] || [])];
 }
 
+function subjectMatchesComparisonSlot(queryKeys: string[], slotKey: string) {
+  return queryKeys.some((queryKey) => {
+    if (queryKey === slotKey) return true;
+    if (comparisonSubjectVariants(queryKey).includes(slotKey)) return true;
+    if (comparisonSubjectVariants(slotKey).includes(queryKey)) return true;
+    return false;
+  });
+}
+
+function comparisonIncludesSubject(comparison: (typeof COMPARISON_DEFINITIONS)[number], subjectKey: string) {
+  return (
+    subjectMatchesComparisonSlot([subjectKey], comparison.primarySubjectKey) ||
+    subjectMatchesComparisonSlot([subjectKey], comparison.secondarySubjectKey)
+  );
+}
+
 function findCuratedComparisonByEquivalence(subjectKeys: string[]) {
   const uniqueKeys = Array.from(new Set(subjectKeys.filter(Boolean)));
   if (uniqueKeys.length < 2) return null;
@@ -417,6 +541,20 @@ function hasComparisonIntent(normalizedInput: string) {
     /\b(vs|versus|compare|compared|relative|divergence|affect|affecting|impact|impacting|read through|readthrough|spillover|transmission)\b/.test(
       normalizedInput,
     ) || /对比|相比|影响|传导/.test(normalizedInput)
+  );
+}
+
+function findImplicitCuratedComparison(normalizedInput: string, subjectKeys: string[]) {
+  if (!hasComparisonIntent(normalizedInput)) return null;
+  const uniqueKeys = Array.from(new Set(subjectKeys.filter(Boolean)));
+  if (uniqueKeys.length < 2) return null;
+
+  return (
+    COMPARISON_DEFINITIONS.find(
+      (comparison) =>
+        subjectMatchesComparisonSlot(uniqueKeys, comparison.primarySubjectKey) &&
+        subjectMatchesComparisonSlot(uniqueKeys, comparison.secondarySubjectKey),
+    ) || null
   );
 }
 
@@ -463,16 +601,56 @@ function buildParsedTopic(raw: string, locale?: string): ParsedTopic {
   const normalizedInput = normalizeText(raw);
   const tokens = tokenize(raw);
   const matches = findSubjectMatches(normalizedInput, locale);
+  const anchoredMatch = findLeadingSubjectMatch(normalizedInput, locale) || findAnchoredPrimaryMatch(normalizedInput, locale);
+  const normalizedMatches = anchoredMatch
+    ? [anchoredMatch, ...matches.filter((item) => item.key !== anchoredMatch.key)]
+    : matches;
   const derivedLens = deriveLens(normalizedInput);
-  const comparisonIntent = derivedLens === 'comparison' || hasComparisonIntent(normalizedInput);
-  const explicitMultiSubjectComparison = derivedLens === 'comparison' && matches.length > 2;
+  const anchoredPrimaryQuery = Boolean(anchoredMatch);
+  const hasPriceMoveIntent =
+    /\b(spillovers?|read\s+through|readthrough|transmission|impact|affect|drivers|matter|moving|moved|move|down|up|drawdown|selloff|rally|why|explain|cae|sube|mueve|movimiento|afecta|afectan|impacto|explica)\b/.test(
+      normalizedInput,
+    ) || /波动|下跌|上涨|影响|原因|为什么/.test(normalizedInput);
+  const implicitComparisonDefinition = findImplicitCuratedComparison(
+    normalizedInput,
+    normalizedMatches.map((item) => item.key),
+  );
+  const anchoredImplicitComparisonDefinition =
+    implicitComparisonDefinition && (!anchoredMatch || comparisonIncludesSubject(implicitComparisonDefinition, anchoredMatch.key))
+      ? implicitComparisonDefinition
+      : null;
+  const comparisonIntent =
+    derivedLens === 'comparison' ||
+    Boolean(anchoredImplicitComparisonDefinition) ||
+    (hasComparisonIntent(normalizedInput) && !anchoredPrimaryQuery);
+  const effectiveMatches =
+    !comparisonIntent && normalizedMatches.length > 1
+      ? anchoredPrimaryQuery
+        ? [normalizedMatches[0]]
+        : hasPriceMoveIntent
+          ? [normalizedMatches[0], ...normalizedMatches.slice(1).filter((item) => !MACRO_CONTEXT_SUBJECT_KEYS.has(item.key))]
+          : normalizedMatches
+      : normalizedMatches;
+  const singleMatchedSubjectKey = effectiveMatches.length === 1 ? effectiveMatches[0].key : null;
+  const normalizedLens =
+    effectiveMatches.length === 1 &&
+    hasPriceMoveIntent &&
+    (derivedLens === 'macro-readthrough' ||
+      (derivedLens === 'policy-impact' &&
+        singleMatchedSubjectKey !== null &&
+        POLICY_LENS_PRICE_MOVE_SUBJECT_KEYS.has(singleMatchedSubjectKey)))
+      ? 'price-move'
+      : derivedLens;
+  const explicitMultiSubjectComparison = derivedLens === 'comparison' && effectiveMatches.length > 2;
   const comparisonDefinition = comparisonIntent
     ? explicitMultiSubjectComparison
       ? null
-      : findCuratedComparison(matches.map((item) => item.key)) || findCuratedComparisonByEquivalence(matches.map((item) => item.key))
+      : anchoredImplicitComparisonDefinition ||
+        findCuratedComparison(effectiveMatches.map((item) => item.key)) ||
+        findCuratedComparisonByEquivalence(effectiveMatches.map((item) => item.key))
     : null;
-  let primary = matches[0] ?? deriveFallbackSubject(tokens);
-  let secondary = matches.find((item) => item.key !== primary.key) ?? null;
+  let primary = effectiveMatches[0] ?? deriveFallbackSubject(tokens);
+  let secondary = effectiveMatches.find((item) => item.key !== primary.key) ?? null;
   if (comparisonDefinition) {
     const primarySubject = SUBJECT_BY_KEY.get(comparisonDefinition.primarySubjectKey);
     const secondarySubject = SUBJECT_BY_KEY.get(comparisonDefinition.secondarySubjectKey);
@@ -493,9 +671,9 @@ function buildParsedTopic(raw: string, locale?: string): ParsedTopic {
       };
     }
   }
-  const lens = comparisonDefinition ? 'comparison' : derivedLens;
-  const anchor = deriveAnchor(normalizedInput);
-  const comparisonTail = explicitMultiSubjectComparison ? matches.slice(1) : [];
+  const lens = comparisonDefinition ? 'comparison' : normalizedLens;
+  const anchor = lens === 'price-move' ? null : deriveAnchor(normalizedInput);
+  const comparisonTail = explicitMultiSubjectComparison ? effectiveMatches.slice(1) : [];
   const compareTarget =
     lens === 'comparison' && secondary
       ? explicitMultiSubjectComparison
@@ -509,7 +687,7 @@ function buildParsedTopic(raw: string, locale?: string): ParsedTopic {
         : secondary.label
       : null;
   const plainSubjectQuery =
-    matches.length === 1 &&
+    effectiveMatches.length === 1 &&
     tokens.length <= 4 &&
     !compareTarget &&
     lens === 'general' &&
@@ -517,7 +695,7 @@ function buildParsedTopic(raw: string, locale?: string): ParsedTopic {
     !tokens.some((token) => QUESTION_WORDS.has(token));
   const isBroad =
     plainSubjectQuery ||
-    (matches.length === 1 &&
+    (effectiveMatches.length === 1 &&
       tokens.every((token) => TIME_WORDS.has(token) || STOP_WORDS.has(token) || subjectTokenSet(primary.key, locale).has(token)));
   const reportKey =
     isBroad
@@ -554,7 +732,7 @@ function buildParsedTopic(raw: string, locale?: string): ParsedTopic {
     anchor,
     compareTarget,
     compareLabel,
-    matchCount: matches.length,
+    matchCount: effectiveMatches.length,
     isBroad,
     explicitMultiSubjectComparison,
     reportKey,
@@ -577,6 +755,9 @@ function scoreReportCandidate(parsed: ParsedTopic, candidate: ReportCandidate, a
   if (candidate.reportKey === parsed.reportKey && parsed.reportKey) score = Math.max(score, 0.96);
   if (candidate.subjectKey === parsed.subjectKey) score += parsed.isBroad ? 0.08 : 0.18;
   if (candidate.assetKey && parsed.assetKey && candidate.assetKey === parsed.assetKey) score += 0.08;
+  if (parsed.reportKey && candidate.assetKey === parsed.assetKey && /(^|-)general$/.test(candidate.reportKey)) {
+    score -= 0.28;
+  }
   if (parsed.isBroad) score -= 0.18;
   if (parsed.isBroad && /(^|-)general$/.test(candidate.reportKey)) score -= 0.2;
 
@@ -609,6 +790,29 @@ function uniqueBy<T>(items: T[], keyFn: (item: T) => string): T[] {
   return out;
 }
 
+function dynamicHeadAliases(head: DynamicCatalogHeadRow): QueryAliasRow[] {
+  const assetKey = head.assetKey || head.key;
+  const reportKey = head.reportKey || `${assetKey}-general`;
+  const targetType: QueryAliasTargetType = head.publicSurface === 'report' ? 'report' : 'asset';
+  return uniqueBy(
+    [head.label, head.key, assetKey, reportKey, ...head.aliases]
+      .map((alias) => alias.trim())
+      .filter(Boolean)
+      .map((alias) => ({
+        aliasKey: normalizeAliasKey(alias),
+        aliasLabel: alias,
+        targetType,
+        reportKey: targetType === 'report' ? reportKey : null,
+        assetKey: targetType === 'asset' ? assetKey : null,
+        source: 'manual' as QueryAliasSource,
+        confidence: Math.max(0.75, Math.min(0.99, 0.88 + head.score / 100)),
+        createdAt: head.createdAt,
+        updatedAt: head.updatedAt,
+      })),
+    (alias) => alias.aliasKey,
+  );
+}
+
 async function buildResolutionCatalog(): Promise<ResolutionCatalog> {
   if (!hasDb()) {
     return { reportCandidates: [], assetCandidates: [], aliases: [] };
@@ -618,10 +822,11 @@ async function buildResolutionCatalog(): Promise<ResolutionCatalog> {
     key: buildCacheKey(['topic-resolution', 'catalog']),
     ttlMs: 60_000,
     loader: async () => {
-      const [currentPublished, fallbackPublished, aliases] = await Promise.all([
+      const [currentPublished, fallbackPublished, aliases, dynamicHeads] = await Promise.all([
         listCurrentPublished(300),
         listPublished(300),
         listQueryAliases(800),
+        listApprovedDynamicCatalogHeads(500),
       ]);
       const sourceRows = [
         ...currentPublished.map((item) => ({
@@ -681,10 +886,32 @@ async function buildResolutionCatalog(): Promise<ResolutionCatalog> {
         }
       }
 
+      for (const head of dynamicHeads) {
+        const assetKey = head.assetKey || head.key;
+        if (!assetKey) continue;
+        const reportKey = head.reportKey || `${assetKey}-general`;
+        const updatedAt = Date.parse(head.updatedAt) || Date.now();
+        const current = assetMap.get(assetKey);
+        assetMap.set(assetKey, {
+          id: assetKey,
+          label: current?.label && current.latestReport ? current.label : head.label,
+          assetKey,
+          reportKey,
+          publicSurface: head.publicSurface,
+          priorityTier: head.priorityTier,
+          dynamic: true,
+          latestReport: current?.latestReport,
+          updatedAt: Math.max(updatedAt, current?.updatedAt || 0),
+        });
+      }
+
       return {
         reportCandidates,
         assetCandidates: Array.from(assetMap.values()).sort((a, b) => b.updatedAt - a.updatedAt),
-        aliases,
+        aliases: [
+          ...aliases,
+          ...dynamicHeads.flatMap(dynamicHeadAliases),
+        ],
       };
     },
   });
@@ -698,18 +925,33 @@ async function maybeTieBreak(
   const cfg = getAIConfig();
   if (!cfg) return null;
   try {
-    const result = await chatJson({
-      config: cfg,
-      schema: TIE_BREAK_SCHEMA,
-      temperature: 0,
-      system: 'Choose the best semantic match candidate id for the given market query. Return only a valid candidateId from the list.',
-      user: [
-        `Query: ${parsed.normalizedInput}`,
-        'Candidates:',
-        ...candidates.map((candidate) => `- ${candidate.id}: ${candidate.label} (score ${candidate.score.toFixed(3)})`),
-      ].join('\n'),
+    return await getOrComputeCached({
+      key: buildCacheKey([
+        'topic-resolution',
+        'tie-break',
+        parsed.normalizedInput,
+        candidates.map((candidate) => ({
+          id: candidate.id,
+          label: candidate.label,
+          score: Number(candidate.score.toFixed(3)),
+        })),
+      ]),
+      ttlMs: 10 * 60_000,
+      loader: async () => {
+        const result = await chatJson({
+          config: cfg,
+          schema: TIE_BREAK_SCHEMA,
+          temperature: 0,
+          system: 'Choose the best semantic match candidate id for the given market query. Return only a valid candidateId from the list.',
+          user: [
+            `Query: ${parsed.normalizedInput}`,
+            'Candidates:',
+            ...candidates.map((candidate) => `- ${candidate.id}: ${candidate.label} (score ${candidate.score.toFixed(3)})`),
+          ].join('\n'),
+        });
+        return result.candidateId || null;
+      },
     });
-    return result.candidateId || null;
   } catch {
     return null;
   }
@@ -963,6 +1205,91 @@ export async function resolveTopicQuery({
 
   const parsed = buildParsedTopic(trimmed, locale);
   const visibility = deriveTopicVisibility(trimmed, locale);
+  let catalog: ResolutionCatalog | null = null;
+  const loadCatalog = async () => {
+    if (catalog) return catalog;
+    catalog = await buildResolutionCatalog();
+    return catalog;
+  };
+  const fallbackResult = () => {
+    if (visibility.visibility === 'private') {
+      return {
+        decision: 'run_private' as const,
+        typedQuery: trimmed,
+        canonicalLabel: visibility.canonicalLabel,
+        visibility: 'private' as const,
+        publicSurface: visibility.publicSurface,
+        priorityTier: visibility.priorityTier,
+        assetKey: visibility.assetKey,
+        message: getPrivateRunMessage(
+          locale,
+          visibility.reason === 'comparison_or_multi_subject' ? 'comparison_private_only' : 'fallback_private_only',
+        ),
+      };
+    }
+
+    return {
+      decision: 'run' as const,
+      typedQuery: trimmed,
+      canonicalLabel: parsed.reportKey ? parsed.canonicalLabel : null,
+      reportKey: parsed.reportKey,
+      visibility: 'public' as const,
+      publicSurface: visibility.publicSurface,
+      priorityTier: visibility.priorityTier,
+      assetKey: parsed.assetKey,
+    };
+  };
+  const buildAssetReuseResult = (latestReport?: AssetCandidate['latestReport'] | undefined) => {
+    const actions: QueryResolveReuse['actions'] = ['open_asset_hub', 'scrape_again'];
+    if (latestReport) actions.splice(1, 0, 'open_current_report');
+    return {
+      decision: 'reuse' as const,
+      reuseType: 'asset' as const,
+      typedQuery: trimmed,
+      canonicalLabel: parsed.subjectLabel,
+      lastUpdatedAt: latestReport ? new Date(latestReport.updatedAt).toISOString() : null,
+      publicSurface: 'asset_hub' as const,
+      priorityTier: visibility.priorityTier,
+      assetKey: parsed.assetKey || undefined,
+      latestReport: latestReport
+        ? {
+            reportKey: latestReport.reportKey,
+            slug: latestReport.slug,
+            sessionId: latestReport.sessionId,
+          }
+        : undefined,
+      actions,
+    };
+  };
+  const buildReportReuseResult = (report: ReportCandidate) => ({
+    decision: 'reuse' as const,
+    reuseType: 'report' as const,
+    typedQuery: trimmed,
+    canonicalLabel: report.label,
+    lastUpdatedAt: new Date(report.updatedAt).toISOString(),
+    publicSurface: 'report' as const,
+    priorityTier: getCanonicalHeadByKey(report.subjectKey)?.priorityTier || visibility.priorityTier,
+    assetKey: report.assetKey || undefined,
+    currentReport: {
+      reportKey: report.reportKey,
+      slug: report.slug,
+      sessionId: report.sessionId,
+    },
+    actions: report.assetKey
+      ? (['open_current_report', 'open_asset_hub', 'scrape_again'] as QueryResolveReuse['actions'])
+      : (['open_current_report', 'scrape_again'] as QueryResolveReuse['actions']),
+  });
+  const buildDynamicRunResult = (candidate: AssetCandidate) => ({
+    decision: 'run' as const,
+    typedQuery: trimmed,
+    canonicalLabel: candidate.label,
+    reportKey: candidate.reportKey || `${candidate.assetKey}-general`,
+    visibility: 'public' as const,
+    publicSurface: candidate.publicSurface || 'asset_hub',
+    priorityTier: candidate.priorityTier || 'secondary',
+    assetKey: candidate.assetKey,
+  });
+
   if (parsed.explicitMultiSubjectComparison && visibility.visibility === 'private') {
     return {
       decision: 'run_private',
@@ -975,21 +1302,76 @@ export async function resolveTopicQuery({
       message: getPrivateRunMessage(locale, 'comparison_private_only'),
     };
   }
-  const catalog = await buildResolutionCatalog();
-  const reportScores = catalog.reportCandidates
+  if (parsed.compareTarget && visibility.visibility === 'private') {
+    return {
+      decision: 'run_private',
+      typedQuery: trimmed,
+      canonicalLabel: visibility.canonicalLabel,
+      visibility: 'private',
+      publicSurface: visibility.publicSurface,
+      priorityTier: visibility.priorityTier,
+      assetKey: visibility.assetKey,
+      message: getPrivateRunMessage(locale, 'comparison_private_only'),
+    };
+  }
+  if (visibility.reason === 'curated_comparison') {
+    return {
+      decision: 'run',
+      typedQuery: trimmed,
+      canonicalLabel: parsed.canonicalLabel,
+      reportKey: parsed.reportKey,
+      visibility: 'public',
+      publicSurface: visibility.publicSurface,
+      priorityTier: visibility.priorityTier,
+      assetKey: parsed.assetKey,
+    };
+  }
+  if (parsed.isBroad && visibility.visibility === 'public' && visibility.publicSurface === 'asset_hub' && parsed.assetKey) {
+    try {
+      const current = (await loadCatalog()).assetCandidates.find((candidate) => candidate.assetKey === parsed.assetKey);
+      return buildAssetReuseResult(current?.latestReport);
+    } catch {
+      return buildAssetReuseResult();
+    }
+  }
+  if (
+    !parsed.isBroad &&
+    parsed.lens === 'price-move' &&
+    visibility.visibility === 'public' &&
+    parsed.matchCount === 1 &&
+    parsed.reportKey &&
+    !parsed.compareTarget
+  ) {
+    try {
+      const report = (await loadCatalog()).reportCandidates.find((candidate) => candidate.reportKey === parsed.reportKey);
+      if (report) {
+        return buildReportReuseResult(report);
+      }
+      return fallbackResult();
+    } catch {
+      return fallbackResult();
+    }
+  }
+  try {
+    catalog = await loadCatalog();
+  } catch {
+    return fallbackResult();
+  }
+  const loadedCatalog = catalog;
+  const reportScores = loadedCatalog.reportCandidates
     .map((candidate) => ({
       ...candidate,
       targetType: 'report' as const,
-      score: scoreReportCandidate(parsed, candidate, catalog.aliases),
+      score: scoreReportCandidate(parsed, candidate, loadedCatalog.aliases),
     }))
     .filter((candidate) => candidate.score >= 0.45)
     .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt);
 
-  const assetScores = catalog.assetCandidates
+  const assetScores = loadedCatalog.assetCandidates
     .map((candidate) => ({
       ...candidate,
       targetType: 'asset' as const,
-      score: scoreAssetCandidate(parsed, candidate, catalog.aliases),
+      score: scoreAssetCandidate(parsed, candidate, loadedCatalog.aliases),
     }))
     .filter((candidate) => candidate.score >= 0.45)
     .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt);
@@ -1042,6 +1424,10 @@ export async function resolveTopicQuery({
       };
     }
 
+    if (best.dynamic && !best.latestReport) {
+      return buildDynamicRunResult(best);
+    }
+
     const actions: QueryResolveReuse['actions'] = ['open_asset_hub', 'scrape_again'];
     if (best.latestReport) actions.splice(1, 0, 'open_current_report');
     return {
@@ -1051,7 +1437,7 @@ export async function resolveTopicQuery({
       canonicalLabel: best.label,
       lastUpdatedAt: best.latestReport ? new Date(best.latestReport.updatedAt).toISOString() : null,
       publicSurface: 'asset_hub',
-      priorityTier: getCanonicalHeadByAssetKey(best.assetKey)?.priorityTier || 'secondary',
+      priorityTier: best.priorityTier || getCanonicalHeadByAssetKey(best.assetKey)?.priorityTier || 'secondary',
       assetKey: best.assetKey,
       latestReport: best.latestReport
         ? {
@@ -1065,6 +1451,45 @@ export async function resolveTopicQuery({
   }
 
   if (best && best.score >= 0.55) {
+    const assetVsGeneralReportAmbiguity =
+      best.targetType === 'asset' &&
+      (visibility.visibility === 'public' || Boolean(best.dynamic)) &&
+      (
+        !second ||
+        (
+          second.targetType === 'report' &&
+          second.assetKey === best.assetKey &&
+          /(^|-)general$/.test(second.reportKey)
+        )
+      );
+
+    if (assetVsGeneralReportAmbiguity) {
+      if (best.dynamic && !best.latestReport) {
+        return buildDynamicRunResult(best);
+      }
+
+      const actions: QueryResolveReuse['actions'] = ['open_asset_hub', 'scrape_again'];
+      if (best.latestReport) actions.splice(1, 0, 'open_current_report');
+      return {
+        decision: 'reuse',
+        reuseType: 'asset',
+        typedQuery: trimmed,
+        canonicalLabel: best.label,
+        lastUpdatedAt: best.latestReport ? new Date(best.latestReport.updatedAt).toISOString() : null,
+        publicSurface: 'asset_hub',
+        priorityTier: best.priorityTier || getCanonicalHeadByAssetKey(best.assetKey)?.priorityTier || 'secondary',
+        assetKey: best.assetKey,
+        latestReport: best.latestReport
+          ? {
+              reportKey: best.latestReport.reportKey,
+              slug: best.latestReport.slug,
+              sessionId: best.latestReport.sessionId,
+            }
+          : undefined,
+        actions,
+      };
+    }
+
     return {
       decision: 'ambiguous',
       typedQuery: trimmed,
@@ -1082,29 +1507,8 @@ export async function resolveTopicQuery({
   }
 
   if (visibility.visibility === 'private') {
-    return {
-      decision: 'run_private',
-      typedQuery: trimmed,
-      canonicalLabel: visibility.canonicalLabel,
-      visibility: 'private',
-      publicSurface: visibility.publicSurface,
-      priorityTier: visibility.priorityTier,
-      assetKey: visibility.assetKey,
-      message: getPrivateRunMessage(
-        locale,
-        visibility.reason === 'comparison_or_multi_subject' ? 'comparison_private_only' : 'fallback_private_only',
-      ),
-    };
+    return fallbackResult();
   }
 
-  return {
-    decision: 'run',
-    typedQuery: trimmed,
-    canonicalLabel: parsed.reportKey ? parsed.canonicalLabel : null,
-    reportKey: parsed.reportKey,
-    visibility: 'public',
-    publicSurface: visibility.publicSurface,
-    priorityTier: visibility.priorityTier,
-    assetKey: parsed.assetKey,
-  };
+  return fallbackResult();
 }

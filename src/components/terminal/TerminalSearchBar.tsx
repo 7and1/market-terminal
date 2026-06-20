@@ -77,11 +77,11 @@ export function TerminalSearchBar({
           ))}
         </div>
 
-        <div className="hidden items-center rounded-full border border-white/10 bg-white/[0.03] p-1 text-[11px] text-white/60 sm:flex">
+        <div className="flex w-full items-center rounded-full border border-white/10 bg-white/[0.03] p-1 text-[11px] text-white/60 sm:w-auto">
           <button
             type="button"
             className={cn(
-              'rounded-full px-3 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgba(4,10,24,0.92)]',
+              'flex-1 rounded-full px-3 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgba(4,10,24,0.92)] sm:flex-none',
               mode === 'fast' ? 'bg-white/10 text-white/80' : 'text-white/55 hover:text-white/75',
             )}
             onClick={() => onModeChange('fast')}
@@ -92,7 +92,7 @@ export function TerminalSearchBar({
           <button
             type="button"
             className={cn(
-              'rounded-full px-3 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgba(4,10,24,0.92)]',
+              'flex-1 rounded-full px-3 py-1 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(0,102,255,0.35)] focus-visible:ring-offset-2 focus-visible:ring-offset-[rgba(4,10,24,0.92)] sm:flex-none',
               mode === 'deep' ? 'bg-white/10 text-white/80' : 'text-white/55 hover:text-white/75',
             )}
             onClick={() => onModeChange('deep')}

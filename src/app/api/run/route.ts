@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { getProviderUsage } from '@/lib/budget-guard';
 import { createLogger } from '@/lib/log';
 import { assessMarketQueryScope } from '@/lib/market-query-scope';
 import { normalizeQueryLocale } from '@/lib/query-copy';
@@ -8,6 +9,7 @@ import { RunRequestSchema } from '@/lib/run-pipeline/contracts';
 import { createSnapshotAuthCookie } from '@/lib/session-write-auth';
 import { executeRun } from '@/lib/run-pipeline/execute';
 import { deriveTopicVisibility } from '@/lib/topic-resolution';
+import { findApprovedDynamicCatalogHeadForTopic } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +18,7 @@ export async function POST(request: Request) {
   const reqId = crypto.randomUUID();
   const startedAt = Date.now();
   const log = createLogger({ reqId, route: '/api/run' });
-  const rateLimit = checkRouteRateLimit(request, 'run');
+  const rateLimit = await checkRouteRateLimit(request, 'run');
   if (!rateLimit.ok) {
     return rateLimit.response;
   }
@@ -35,7 +37,14 @@ export async function POST(request: Request) {
 
   const locale = body.locale ? normalizeQueryLocale(body.locale) : undefined;
   const topicVisibility = deriveTopicVisibility(body.topic, locale);
-  const trustedReportKey = topicVisibility.visibility === 'public' ? topicVisibility.reportKey : null;
+  const dynamicHead = topicVisibility.visibility === 'private'
+    ? await findApprovedDynamicCatalogHeadForTopic(body.topic).catch(() => null)
+    : null;
+  const dynamicReportKey = dynamicHead
+    ? dynamicHead.reportKey || `${dynamicHead.assetKey || dynamicHead.key}-general`
+    : null;
+  const trustedReportKey = topicVisibility.visibility === 'public' ? topicVisibility.reportKey : dynamicReportKey;
+  const trustedAssetKey = topicVisibility.assetKey || dynamicHead?.assetKey || dynamicHead?.key || null;
   if (body.runReason === 'refresh' && (!body.reportKey || !trustedReportKey || body.reportKey !== trustedReportKey)) {
     log.warn('run.invalid_refresh_target', {
       ms: Date.now() - startedAt,
@@ -82,6 +91,26 @@ export async function POST(request: Request) {
     ...body,
     reportKey: trustedReportKey && body.reportKey === trustedReportKey ? trustedReportKey : undefined,
   };
+  const [brightUsage, openRouterUsage] = await Promise.all([
+    getProviderUsage('brightdata'),
+    getProviderUsage('openrouter'),
+  ]);
+  if (!brightUsage.ok || !openRouterUsage.ok) {
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+    });
+    applyRateLimitHeaders(headers, rateLimit.headers);
+    return new Response(
+      JSON.stringify({
+        error: 'Provider budget exhausted',
+        providers: {
+          brightdata: { calls: brightUsage.calls, limit: brightUsage.limit, ok: brightUsage.ok },
+          openrouter: { calls: openRouterUsage.calls, limit: openRouterUsage.limit, ok: openRouterUsage.ok },
+        },
+      }),
+      { status: 503, headers },
+    );
+  }
   const encoder = new TextEncoder();
   const headers = new Headers({
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -109,6 +138,7 @@ export async function POST(request: Request) {
             monitorId: effectiveBody.monitorId || null,
             monitorRunId: effectiveBody.monitorRunId || null,
             reportKey: effectiveBody.reportKey || null,
+            assetKey: trustedAssetKey,
             runReason: effectiveBody.runReason,
           },
           onEvent: ({ event, data }) => {

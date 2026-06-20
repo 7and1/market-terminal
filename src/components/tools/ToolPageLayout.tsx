@@ -34,7 +34,7 @@ interface ToolPageLayoutProps {
   keywords: string[];
   features: ToolFeature[];
   searchPlaceholder: string;
-  exampleOutput: ReactNode;
+  exampleOutput?: ReactNode;
   statsLine: string;
   jsonLd?: Record<string, unknown>;
   ctaTitle?: string;
@@ -133,15 +133,16 @@ export function ToolPageLayout({
             </div>
           )}
 
-          {/* Example Output */}
-          <div className="mt-16">
-            <h2 className="mb-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
-              {exampleOutputLabel}
-            </h2>
-            <Card className="overflow-hidden p-5 sm:p-6">
-              {exampleOutput}
-            </Card>
-          </div>
+          {exampleOutput ? (
+            <div className="mt-16">
+              <h2 className="mb-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-white/40">
+                {exampleOutputLabel}
+              </h2>
+              <Card className="overflow-hidden p-5 sm:p-6">
+                {exampleOutput}
+              </Card>
+            </div>
+          ) : null}
 
           {/* Stats */}
           <p className="mt-10 text-center text-xs text-white/40">{statsLine}</p>

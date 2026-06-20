@@ -1,6 +1,7 @@
 import type { GraphEdge, GraphNode } from '@/components/terminal/types';
 import type { EvidenceItem, TapeItem } from '@/lib/run-pipeline/contracts';
 import { slugId, truncateText } from '@/lib/run-pipeline/utils';
+import { findSubjectForTopic, getTopicSearchHints, type TopicSearchHints } from '@/lib/topic-catalog';
 
 function normalizeEntityCandidate(raw: string) {
   return String(raw || '')
@@ -16,7 +17,6 @@ function isNoisyEntityCandidate(label: string) {
   if (/\d{2,}/.test(s)) return true;
   if (/\b(previous close|week range|day range|open interest|market cap|prediction|forecast|price|chart|today)\b/.test(s)) return true;
   if (/\b(falls|rises|surges|drops|waits|climbs|slips|struggles|extends)\b/.test(s)) return true;
-  if (/\b(bitcoin|btc|gold|xau|dxy|usd)\b/.test(s)) return true;
   if (/\b(news|analysis|report|reports|update|updates)\b/.test(s) && s.split(/\s+/).length <= 3) return true;
   if (/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\b/.test(s)) return true;
   return false;
@@ -30,7 +30,7 @@ function isNameLikeEntityLabel(label: string) {
   const words = compact.split(/\s+/).filter(Boolean);
   const blacklist = new Set(
     [
-      'market', 'crypto', 'cryptos', 'bitcoin', 'gold', 'dollar', 'price', 'analysis', 'forecast', 'update', 'flows',
+      'market', 'dollar', 'price', 'analysis', 'forecast', 'update', 'flows',
       'yield', 'yields', 'rates', 'jobs', 'report', 'reports', 'news', 'optimism', 'weakness', 'liquidity',
       'session', 'today', 'trading', 'day', 'cut', 'data', 'despite', 'stunning', 'research', 'team', 'strong',
       'weak', 'fragile', 'structural', 'case', 'first', 'bottom',
@@ -38,7 +38,6 @@ function isNameLikeEntityLabel(label: string) {
   );
   if (words.some((w) => blacklist.has(w.toLowerCase()))) return false;
   const compactLower = compact.toLowerCase();
-  if (compactLower.includes('bitcoin') || compactLower.includes('crypto')) return false;
   if (words.length === 1) return false;
 
   if (words.length === 2) {
@@ -86,12 +85,12 @@ function extractHeuristicEntities(text: string): string[] {
 
   pushMatches(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\b/g);
   pushMatches(/\b[A-Z][a-z]+[A-Z][A-Za-z]+\b/g);
-  pushMatches(/\b(?:SEC|Fed|Federal Reserve|US Treasury|Treasury|JPMorgan|BlackRock|Coinbase|Binance|MicroStrategy|Grayscale|Glassnode|ECB|IMF|CFTC|DOJ)\b/gi);
+  pushMatches(/\b(?:SEC|Fed|Federal Reserve|US Treasury|Treasury|JPMorgan|BlackRock|ECB|IMF|CFTC|DOJ)\b/gi);
 
   const stopWords = new Set(
     [
-      'today', 'latest', 'news', 'analysis', 'update', 'market', 'markets', 'price', 'prices', 'crypto',
-      'cryptocurrency', 'bitcoin', 'gold', 'dollar', 'index', 'futures', 'etf', 'etfs', 'forecast', 'outlook',
+      'today', 'latest', 'news', 'analysis', 'update', 'market', 'markets', 'price', 'prices',
+      'dollar', 'index', 'futures', 'etf', 'etfs', 'forecast', 'outlook',
       'traders', 'investors', 'session',
     ].map((w) => w.toLowerCase()),
   );
@@ -138,7 +137,7 @@ export function normalizeNodeTypeByLabel(type: GraphNode['type'], label: string)
   if (type === 'source') {
     if (looksLikeDomainLabel(raw)) return 'source';
     if (
-      /\b(federal reserve|us treasury|treasury|sec|cftc|doj|ecb|imf|jpmorgan|blackrock|coinbase|binance|microstrategy|grayscale|michael saylor|elon musk)\b/.test(
+      /\b(federal reserve|us treasury|treasury|sec|cftc|doj|ecb|imf|jpmorgan|blackrock)\b/.test(
         lower,
       )
     ) {
@@ -149,7 +148,7 @@ export function normalizeNodeTypeByLabel(type: GraphNode['type'], label: string)
   return type;
 }
 
-function extractKeywordActors(text: string): string[] {
+function extractKeywordActors(text: string, hints?: TopicSearchHints | null): string[] {
   const s = String(text || '').toLowerCase();
   if (!s.trim()) return [];
 
@@ -161,12 +160,14 @@ function extractKeywordActors(text: string): string[] {
   if (/\b(doj|department of justice)\b/.test(s)) out.add('DOJ');
   if (/\b(ecb)\b/.test(s)) out.add('ECB');
   if (/\b(imf)\b/.test(s)) out.add('IMF');
-  if (/\b(blackrock|ibit)\b/.test(s)) out.add('BlackRock');
-  if (/\b(grayscale|gbtc)\b/.test(s)) out.add('Grayscale');
-  if (/\b(binance)\b/.test(s)) out.add('Binance');
-  if (/\b(coinbase)\b/.test(s)) out.add('Coinbase');
+  if (/\b(blackrock)\b/.test(s)) out.add('BlackRock');
   if (/\b(jpmorgan)\b/.test(s)) out.add('JPMorgan');
-  if (/\b(microstrategy|mstr)\b/.test(s)) out.add('MicroStrategy');
+  for (const actor of hints?.knownActors || []) {
+    const clean = actor.trim();
+    if (!clean) continue;
+    const actorKey = clean.toLowerCase();
+    if (s.includes(actorKey)) out.add(clean);
+  }
 
   return Array.from(out).slice(0, 6);
 }
@@ -228,6 +229,7 @@ export function ensureMinimumGraph({
         type: 'mentions',
         confidence: 0.25,
         evidenceIds: [seedEvidenceId],
+        origin: 'heuristic',
       });
     }
   }
@@ -286,7 +288,6 @@ export function enrichGraphFromTapeAndEvidence({
     if (edge.from === edge.to) return;
     if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) return;
     const evidenceIds = Array.from(new Set(edge.evidenceIds)).slice(0, 6);
-    if (!evidenceIds.length) return;
 
     let id = edge.id.slice(0, 40);
     if (!id) id = `e_${slugId(`${edge.from}_${edge.to}_${edge.type}`)}`.slice(0, 40);
@@ -304,6 +305,7 @@ export function enrichGraphFromTapeAndEvidence({
       type: edge.type,
       confidence: Math.max(0, Math.min(1, edge.confidence)),
       evidenceIds,
+      origin: edge.origin || 'heuristic',
     });
     edgeIds.add(id);
   };
@@ -364,22 +366,22 @@ export function enrichGraphFromTapeAndEvidence({
 
   const evidenceForSource = (sourceLabel: string) => {
     const key = sourceLabel.toLowerCase();
-    return evidence.find((ev) => (ev.source || '').toLowerCase() === key) || evidence[0] || null;
+    return evidence.find((ev) => (ev.source || '').toLowerCase() === key) || null;
   };
 
   for (const n of outNodes) {
     if ((degrees.get(n.id) ?? 0) > 0) continue;
     if (!assetNodeId || n.id === assetNodeId || outEdges.length >= MAX_EDGES) continue;
 
-    const ev = n.type === 'source' ? evidenceForSource(n.label) : evidence[0] || null;
-    if (!ev) continue;
+    const ev = n.type === 'source' ? evidenceForSource(n.label) : null;
+    const evidenceIds = ev ? [ev.id] : [];
 
     if (n.type === 'source') {
-      ensureEdge({ id: `e_iso_${slugId(n.id)}`, from: n.id, to: assetNodeId, type: 'mentions', confidence: 0.22, evidenceIds: [ev.id] });
+      ensureEdge({ id: `e_iso_${slugId(n.id)}`, from: n.id, to: assetNodeId, type: 'mentions', confidence: 0.22, evidenceIds });
     } else if (n.type === 'event') {
-      ensureEdge({ id: `e_iso_${slugId(n.id)}`, from: n.id, to: assetNodeId, type: 'hypothesis', confidence: 0.18, evidenceIds: [ev.id] });
+      ensureEdge({ id: `e_iso_${slugId(n.id)}`, from: n.id, to: assetNodeId, type: 'hypothesis', confidence: 0.18, evidenceIds });
     } else {
-      ensureEdge({ id: `e_iso_${slugId(n.id)}`, from: n.id, to: assetNodeId, type: 'same_story', confidence: 0.16, evidenceIds: [ev.id] });
+      ensureEdge({ id: `e_iso_${slugId(n.id)}`, from: n.id, to: assetNodeId, type: 'same_story', confidence: 0.16, evidenceIds });
     }
 
     degrees.set(n.id, 1);
@@ -409,18 +411,29 @@ export function enrichEntitiesFromEvidence({
   const labelKey = new Set(outNodes.map((n) => `${n.type}|${n.label.toLowerCase()}`));
   const edgeKey = new Set(outEdges.map((e) => `${e.from}|${e.to}|${e.type}`));
 
-  const topicLower = topic.trim().toLowerCase();
-  const banned = new Set([topicLower, 'bitcoin', 'btc', 'gold', 'xau', 'usd', 'dxy', 'sp500', 's&p 500', 's&p500'].map((s) => s.trim()).filter(Boolean));
-
   const assetId = outNodes.find((n) => n.type === 'asset')?.id || outNodes[0]?.id || null;
   if (!assetId) return { nodes: outNodes, edges: outEdges };
 
+  const subject = findSubjectForTopic(topic);
+  const hints = getTopicSearchHints(topic);
+  const topicLower = topic.trim().toLowerCase();
+  const banned = new Set(
+    [
+      topicLower,
+      subject?.key,
+      subject?.assetKey,
+      subject?.label,
+      ...(subject?.aliases || []),
+    ]
+      .map((s) => String(s || '').toLowerCase().trim())
+      .filter(Boolean),
+  );
   const candidates = new Map<string, { score: number; evidenceIds: Set<string> }>();
   for (const ev of evidence) {
     const textBlob = `${ev.title}\n${truncateText(ev.excerpt || '', 300)}`;
     const aiEntities = ev.aiSummary?.entities || [];
     const heuristicEntities = extractHeuristicEntities(textBlob);
-    const keywordActors = extractKeywordActors(textBlob);
+    const keywordActors = extractKeywordActors(textBlob, hints);
     const ents = Array.from(new Set([...aiEntities, ...heuristicEntities, ...keywordActors]));
 
     for (const raw of ents) {
@@ -476,7 +489,7 @@ export function enrichEntitiesFromEvidence({
     }
 
     if (outEdges.length >= MAX_EDGES) return;
-    outEdges.push({ ...edge, id, evidenceIds });
+    outEdges.push({ ...edge, id, evidenceIds, origin: edge.origin || 'heuristic' });
     edgeIds.add(id);
     edgeKey.add(key);
   };
@@ -556,7 +569,7 @@ export function enforceLinkCoherence({
 
   const pickEvidenceForSource = (sourceLabel: string) => {
     const key = normalizedDomain(sourceLabel);
-    return evidence.find((ev) => normalizedDomain(ev.source) === key)?.id || evidence[0]?.id || null;
+    return evidence.find((ev) => normalizedDomain(ev.source) === key)?.id || null;
   };
 
   const sourceForEvidenceId = (evidenceId: string | null) => {
@@ -588,9 +601,7 @@ export function enforceLinkCoherence({
   }) => {
     if (!nodeById.has(from) || !nodeById.has(to)) return;
     if (from === to || outEdges.length >= MAX_EDGES) return;
-    const uniqueEvidence = Array.from(new Set(evidenceIds)).filter(Boolean).slice(0, 4);
-    const finalEvidence = uniqueEvidence.length ? uniqueEvidence : evidence[0]?.id ? [evidence[0].id] : [];
-    if (!finalEvidence.length) return;
+    const finalEvidence = Array.from(new Set(evidenceIds)).filter(Boolean).slice(0, 4);
 
     const directKey = `${from}|${to}|${type}`;
     const reverseKey = `${to}|${from}|${type}`;
@@ -611,6 +622,7 @@ export function enforceLinkCoherence({
       confidence: Math.max(0, Math.min(1, confidence)),
       evidenceIds: finalEvidence,
       rationale,
+      origin: 'heuristic',
     });
     edgeIds.add(id);
     edgeKeys.add(directKey);
@@ -618,7 +630,7 @@ export function enforceLinkCoherence({
 
   for (const evt of eventNodes) {
     const eids = eventEdgeEvidenceIds(evt.id);
-    const seedEvidenceId = eids[0] || evidence[0]?.id || null;
+    const seedEvidenceId = eids[0] || null;
 
     if (!hasLinkBetweenTypes(evt.id, 'source')) {
       const srcId = sourceForEvidenceId(seedEvidenceId);

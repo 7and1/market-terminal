@@ -1,14 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resolveTopicQuery = vi.fn();
+const insertQueryLog = vi.fn();
+const checkRateLimitCounter = vi.fn();
 
 vi.mock('@/lib/topic-resolution', () => ({
   resolveTopicQuery,
 }));
 
+vi.mock('@/lib/db', () => ({
+  insertQueryLog,
+  checkRateLimitCounter,
+}));
+
 describe('/api/query/resolve POST', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    insertQueryLog.mockResolvedValue(undefined);
+    checkRateLimitCounter.mockResolvedValue({ allowed: true, remaining: 29, limit: 30, resetMs: 60_000 });
+    delete process.env.DATABASE_URL;
   });
 
   it('returns 400 for invalid request bodies', async () => {
@@ -22,6 +32,27 @@ describe('/api/query/resolve POST', () => {
     );
 
     expect(response.status).toBe(400);
+    expect(resolveTopicQuery).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 when the query resolve rate limit is exceeded', async () => {
+    process.env.DATABASE_URL = 'postgres://rate-limit:test@localhost:5432/app';
+    checkRateLimitCounter.mockResolvedValueOnce({ allowed: false, remaining: 0, limit: 30, resetMs: 42_000 });
+
+    const { POST } = await import('@/app/api/query/resolve/route');
+    const response = await POST(
+      new Request('http://localhost/api/query/resolve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: 'NVDA after earnings' }),
+      }),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('X-RateLimit-Limit')).toBe('30');
+    expect(response.headers.get('X-RateLimit-Backend')).toBe('pg');
+    expect(json.error).toBe('Too many requests');
     expect(resolveTopicQuery).not.toHaveBeenCalled();
   });
 
@@ -57,6 +88,14 @@ describe('/api/query/resolve POST', () => {
     });
     expect(json.decision).toBe('reuse');
     expect(json.currentReport.slug).toBe('nvda-after-earnings-2026-03-26-abcd');
+    expect(insertQueryLog).toHaveBeenCalledWith({
+      input: 'NVDA after earnings',
+      normalized: 'NVDA after earnings',
+      locale: null,
+      surface: 'landing',
+      decision: 'reuse',
+      result: expect.objectContaining({ decision: 'reuse' }),
+    });
   });
 
   it('forwards locale when provided', async () => {

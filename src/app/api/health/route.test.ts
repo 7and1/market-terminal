@@ -43,7 +43,9 @@ vi.mock('@/lib/db', () => ({
 
 describe('/api/health GET', () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.resetAllMocks();
+    process.env.OPERATOR_TOKEN = 'operator-secret';
     hasBrightData.mockReturnValue(true);
     hasDb.mockReturnValue(true);
     getAIConfig.mockReturnValue({ model: 'test-model' });
@@ -68,7 +70,9 @@ describe('/api/health GET', () => {
     probeDb.mockResolvedValue({ ok: false, latencyMs: 4, error: 'db-down' });
     probeDbSchema.mockResolvedValue({ ok: true, latencyMs: 1, missing: [], present: ['market_signal.sessions'] });
     const { GET } = await import('@/app/api/health/route');
-    const response = await GET(new Request('http://localhost/api/health?probe=1'));
+    const response = await GET(new Request('http://localhost/api/health?probe=1', {
+      headers: { 'x-operator-token': 'operator-secret' },
+    }));
     const json = await response.json();
 
     expect(response.status).toBe(503);
@@ -87,11 +91,46 @@ describe('/api/health GET', () => {
       present: ['market_signal.sessions'],
     });
     const { GET } = await import('@/app/api/health/route');
-    const response = await GET(new Request('http://localhost/api/health?probe=1'));
+    const response = await GET(new Request('http://localhost/api/health?probe=1', {
+      headers: { 'x-operator-token': 'operator-secret' },
+    }));
     const json = await response.json();
 
     expect(response.status).toBe(503);
     expect(json.probes.dbSchema.ok).toBe(false);
     expect(json.probes.dbSchema.missing).toContain('market_signal.idx_events_session_id');
+  });
+
+  it('requires operator auth for active probes without calling providers', async () => {
+    const { GET } = await import('@/app/api/health/route');
+    const response = await GET(new Request('http://localhost/api/health?probe=1'));
+    const json = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(json.error).toBe('Operator authorization required');
+    expect(brightDataSerpGoogle).not.toHaveBeenCalled();
+    expect(createChatCompletion).not.toHaveBeenCalled();
+    expect(probeDb).not.toHaveBeenCalled();
+  });
+
+  it('reuses active probe results for 60 seconds', async () => {
+    brightDataSerpGoogle.mockResolvedValue([{ url: 'https://example.com', title: 'x' }]);
+    createChatCompletion.mockResolvedValue({ content: 'ok' });
+    probeDb.mockResolvedValue({ ok: true, latencyMs: 3 });
+    probeDbSchema.mockResolvedValue({ ok: true, latencyMs: 1, missing: [], present: ['market_signal.sessions'] });
+
+    const { GET } = await import('@/app/api/health/route');
+    const request = new Request('http://localhost/api/health?probe=1', {
+      headers: { 'x-operator-token': 'operator-secret' },
+    });
+    const first = await GET(request);
+    const second = await GET(request);
+    const secondJson = await second.json();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(secondJson.cached).toBe(true);
+    expect(brightDataSerpGoogle).toHaveBeenCalledTimes(1);
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
   });
 });

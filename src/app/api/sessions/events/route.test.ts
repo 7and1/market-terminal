@@ -27,6 +27,7 @@ describe('/api/sessions/events GET', () => {
       step: 'ready',
       progress: 1,
       meta: {},
+      published: false,
       _creationTime: Date.UTC(2026, 2, 18),
     });
     listEventsPage.mockResolvedValue({
@@ -68,15 +69,61 @@ describe('/api/sessions/events GET', () => {
 
   it('returns 403 when the caller does not own the session', async () => {
     hasDb.mockReturnValue(true);
+    const sessionId = '8d0e2f3d-a338-46a8-bfdc-a626751f6e5f';
+    getSession.mockResolvedValue({
+      sessionId,
+      topic: 'Bitcoin',
+      status: 'ready',
+      step: 'ready',
+      progress: 1,
+      meta: {},
+      published: false,
+      _creationTime: Date.UTC(2026, 2, 18),
+    });
 
     const { GET } = await import('@/app/api/sessions/events/route');
     const response = await GET(
       new Request('http://localhost/api/sessions/events?sessionId=8d0e2f3d-a338-46a8-bfdc-a626751f6e5f'),
     );
+    const json = await response.json();
 
     expect(response.status).toBe(403);
-    expect(getSession).not.toHaveBeenCalled();
+    expect(json.code).toBe('SESSION_PRIVATE');
     expect(listEventsPage).not.toHaveBeenCalled();
+  });
+
+  it('allows anonymous replay for published sessions', async () => {
+    hasDb.mockReturnValue(true);
+    const sessionId = '8d0e2f3d-a338-46a8-bfdc-a626751f6e5f';
+    getSession.mockResolvedValue({
+      sessionId,
+      topic: 'Bitcoin',
+      status: 'ready',
+      step: 'ready',
+      progress: 1,
+      meta: {},
+      published: true,
+      _creationTime: Date.UTC(2026, 2, 18),
+    });
+    listEventsPage.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    });
+
+    const { GET } = await import('@/app/api/sessions/events/route');
+    const response = await GET(
+      new Request('http://localhost/api/sessions/events?sessionId=8d0e2f3d-a338-46a8-bfdc-a626751f6e5f'),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.session.published).toBe(true);
+    expect(listEventsPage).toHaveBeenCalledWith({
+      sessionId,
+      limit: 250,
+      cursor: undefined,
+    });
   });
 
   it('returns 404 when the session is missing', async () => {

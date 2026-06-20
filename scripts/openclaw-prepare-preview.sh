@@ -17,9 +17,16 @@ rsync -a \
   --exclude .git \
   --exclude node_modules \
   --exclude .next \
-  --exclude .open-next \
   --exclude .codex-results \
+  --exclude .env.local \
+  --exclude .env.production \
+  --exclude .env.development \
+  --exclude .env.test \
+  --exclude .env.preview-runtime \
+  --exclude .env.preview-runtime.fixed \
   ./ "openclaw:${REMOTE_WORKSPACE}/"
+
+ssh openclaw "rm -f '${REMOTE_WORKSPACE}/.env.local' '${REMOTE_WORKSPACE}/.env.production' '${REMOTE_WORKSPACE}/.env.development' '${REMOTE_WORKSPACE}/.env.test'"
 
 ssh "$PROD_HOST" "cat '$PROD_ENV_PATH'" | \
   ssh openclaw "cat > '${REMOTE_WORKSPACE}/.env.preview-runtime' && chmod 600 '${REMOTE_WORKSPACE}/.env.preview-runtime'"
@@ -68,6 +75,7 @@ fi
 
 cat <<'PY' | ssh openclaw "cat > /tmp/codex-fix-preview-env.py && chmod 700 /tmp/codex-fix-preview-env.py"
 import pathlib
+import shlex
 import sys
 import urllib.parse
 
@@ -80,8 +88,14 @@ for line in (workspace / '.env.preview-runtime').read_text().splitlines():
     s = line.strip()
     if not s or s.startswith('#') or '=' not in s:
         continue
+    if s.startswith('export '):
+        s = s[7:].lstrip()
     key, value = s.split('=', 1)
-    values[key.strip()] = value.strip()
+    key = key.strip()
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    values[key] = value
 
 url = urllib.parse.urlparse(values['DATABASE_URL'])
 netloc = f'127.0.0.1:{port}'
@@ -100,18 +114,24 @@ fixed_db = urllib.parse.urlunparse((
     url.fragment,
 ))
 
+def env_line(key, value):
+    return f'{key}={shlex.quote(str(value or ""))}'
+
 lines = [
-    f'DATABASE_URL={fixed_db}',
-    f'BRIGHTDATA_API_TOKEN={values.get("BRIGHTDATA_API_TOKEN", "")}',
-    f'BRIGHTDATA_WEB_UNLOCKER_ZONE={values.get("BRIGHTDATA_WEB_UNLOCKER_ZONE", "")}',
-    f'BRIGHTDATA_SERP_ZONE={values.get("BRIGHTDATA_SERP_ZONE", "")}',
-    f'OPENROUTER_API_KEY={values.get("OPENROUTER_API_KEY", "")}',
-    f'OPENROUTER_MODEL={model_override or values.get("OPENROUTER_MODEL", "")}',
-    f'ALLOW_CLIENT_API_KEYS={values.get("ALLOW_CLIENT_API_KEYS", "false")}',
+    env_line('DATABASE_URL', fixed_db),
+    env_line('BRIGHTDATA_API_TOKEN', values.get('BRIGHTDATA_API_TOKEN', '')),
+    env_line('BRIGHTDATA_WEB_UNLOCKER_ZONE', values.get('BRIGHTDATA_WEB_UNLOCKER_ZONE', '')),
+    env_line('BRIGHTDATA_SERP_ZONE', values.get('BRIGHTDATA_SERP_ZONE', '')),
+    env_line('OPENROUTER_API_KEY', values.get('OPENROUTER_API_KEY', '')),
+    env_line('OPENROUTER_MODEL', model_override or values.get('OPENROUTER_MODEL', '')),
+    env_line('ALLOW_CLIENT_API_KEYS', values.get('ALLOW_CLIENT_API_KEYS', 'false')),
 ]
 
+if values.get('OPENROUTER_MODEL_FALLBACKS'):
+    lines.append(env_line('OPENROUTER_MODEL_FALLBACKS', values['OPENROUTER_MODEL_FALLBACKS']))
+
 if 'NEXT_PUBLIC_SITE_URL' in values:
-    lines.append(f'NEXT_PUBLIC_SITE_URL={values["NEXT_PUBLIC_SITE_URL"]}')
+    lines.append(env_line('NEXT_PUBLIC_SITE_URL', values['NEXT_PUBLIC_SITE_URL']))
 
 out = workspace / '.env.preview-runtime.fixed'
 out.write_text('\n'.join(lines) + '\n')

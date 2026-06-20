@@ -1,10 +1,14 @@
 import {
+  findApprovedDynamicCatalogHeadForTopic,
   getReportHead,
+  listByAsset,
   publishSession,
+  upsertAssetDailyMetric,
   type ReportHeadRow,
   type SessionRow,
 } from '@/lib/db';
-import { summarizeSessionQuality } from '@/lib/report-quality';
+import { filterPublishableSessions, summarizeSessionQuality } from '@/lib/report-quality';
+import { aggregateAssetData } from '@/lib/asset-aggregation';
 import {
   deriveCanonicalLabelFromTopic,
   deriveReportKeyFromTopic,
@@ -67,6 +71,27 @@ function isSlugConflict(error: unknown): boolean {
   return !pg.constraint || pg.constraint.includes('slug');
 }
 
+async function materializePublishedAssetMetrics(assetKey: string) {
+  const sessions = filterPublishableSessions(await listByAsset(assetKey, 500));
+  if (!sessions.length) return;
+  const aggregation = aggregateAssetData(sessions, assetKey);
+  const metricDate = new Date().toISOString().slice(0, 10);
+  await upsertAssetDailyMetric({
+    assetKey,
+    metricDate,
+    summary: aggregation as unknown as Record<string, unknown>,
+    metrics: {
+      totalAnalyses: aggregation.totalAnalyses,
+      latestAnalysisDate: aggregation.latestAnalysisDate,
+      latestSentiment: aggregation.latestSentiment,
+      reportCount: aggregation.reports.length,
+      catalystCount: aggregation.topCatalysts.length,
+      entityCount: aggregation.topEntities.length,
+      peerAssetCount: aggregation.peerAssets.length,
+    },
+  });
+}
+
 export async function promoteReadySessionToPublicHead(
   session: SessionRow,
   options?: {
@@ -75,13 +100,31 @@ export async function promoteReadySessionToPublicHead(
 ): Promise<PromoteReadySessionResult> {
   const locale = options?.locale;
   const topicVisibility = deriveTopicVisibility(session.topic, locale);
+  const dynamicHead = topicVisibility.visibility === 'private'
+    ? await findApprovedDynamicCatalogHeadForTopic(session.topic).catch(() => null)
+    : null;
+  const dynamicAssetKey = dynamicHead?.assetKey || dynamicHead?.key || null;
+  const dynamicReportKey = dynamicHead
+    ? dynamicHead.reportKey || `${dynamicAssetKey || dynamicHead.key}-general`
+    : null;
+  const effectiveVisibility = dynamicHead
+    ? {
+        visibility: 'public' as const,
+        canonicalLabel: dynamicHead.label,
+        assetKey: dynamicAssetKey,
+        reportKey: dynamicReportKey,
+        subjectKey: dynamicHead.key,
+        publicSurface: dynamicHead.publicSurface,
+        priorityTier: dynamicHead.priorityTier,
+      }
+    : topicVisibility;
   const derivedReportKey = deriveReportKeyFromTopic(session.topic, locale);
   const trustedReportKey =
-    topicVisibility.visibility === 'public'
-      ? topicVisibility.reportKey || deriveReportKeyFromTopic(session.topic, locale)
+    effectiveVisibility.visibility === 'public'
+      ? effectiveVisibility.reportKey || deriveReportKeyFromTopic(session.topic, locale)
       : null;
-  const trustedCanonicalLabel = topicVisibility.canonicalLabel || deriveCanonicalLabelFromTopic(session.topic, locale);
-  const trustedAssetKey = topicVisibility.assetKey || normalizeAssetKeyFromTopic(session.topic, locale) || FALLBACK_ASSET_KEY;
+  const trustedCanonicalLabel = effectiveVisibility.canonicalLabel || deriveCanonicalLabelFromTopic(session.topic, locale);
+  const trustedAssetKey = effectiveVisibility.assetKey || normalizeAssetKeyFromTopic(session.topic, locale) || FALLBACK_ASSET_KEY;
   if (session.status !== 'ready') {
     return {
       ok: false,
@@ -99,7 +142,7 @@ export async function promoteReadySessionToPublicHead(
       assetKey: trustedAssetKey,
       reportKey: trustedReportKey || session.reportKey || derivedReportKey,
       canonicalLabel: trustedCanonicalLabel,
-      subjectKey: topicVisibility.subjectKey || trustedAssetKey,
+      subjectKey: effectiveVisibility.subjectKey || trustedAssetKey,
       previousHead: trustedReportKey ? await getReportHead(trustedReportKey).catch(() => null) : null,
     };
   }
@@ -118,7 +161,7 @@ export async function promoteReadySessionToPublicHead(
     };
   }
 
-  if (topicVisibility.visibility !== 'public') {
+  if (effectiveVisibility.visibility !== 'public') {
     return {
       ok: false,
       status: 422,
@@ -132,7 +175,7 @@ export async function promoteReadySessionToPublicHead(
 
   const assetKey = trustedAssetKey;
   const reportKey = trustedReportKey || derivedReportKey;
-  const slugBase = reportKey || topicVisibility.canonicalLabel || session.topic;
+  const slugBase = reportKey || effectiveVisibility.canonicalLabel || session.topic;
   const previousHead = await getReportHead(reportKey).catch(() => null);
 
   let resolvedSlug = '';
@@ -176,6 +219,8 @@ export async function promoteReadySessionToPublicHead(
     assetKey,
     locale,
   });
+
+  await materializePublishedAssetMetrics(assetKey).catch(() => {});
 
   return {
     ok: true,

@@ -17,7 +17,9 @@ import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
 import { PageContainer } from '@/components/layout/page-container';
+import { SubscribeBox } from '@/components/public/SubscribeBox';
 import { Card } from '@/components/ui/card';
+import { isSubscriptionEmailConfigured } from '@/lib/email';
 import { getReportProjection } from '@/lib/public-read-model';
 
 export const revalidate = 3600;
@@ -66,8 +68,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
   const session = report.session;
   const topic = report.head?.canonicalLabel || session.topic;
-  const resolvedSlug = report.isCurrent ? slug : (report.head?.currentSlug || slug);
-  const localizedPath = `${locale === 'en' ? '' : `/${locale}`}/report/${resolvedSlug}`;
+  const localizedPath = `${locale === 'en' ? '' : `/${locale}`}/report/${slug}`;
   const pageUrl = `${baseUrl}${localizedPath}`;
   const arts = ((session.meta as Record<string, unknown>)?.artifacts ?? {}) as Record<string, unknown>;
   const evidence = (arts.evidence as { id: string; title: string; url: string; source: string; publishedAt: number; observedAt: number; timeKind: 'published' | 'observed' }[]) ?? [];
@@ -103,7 +104,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       images: [ogImageUrl],
     },
     robots:
-      quality.publishable && report.isCurrent
+      quality.publishable
         ? undefined
         : {
             index: false,
@@ -112,10 +113,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     alternates: {
       canonical: pageUrl,
       languages: {
-        en: `${baseUrl}/report/${resolvedSlug}`,
-        es: `${baseUrl}/es/report/${resolvedSlug}`,
-        zh: `${baseUrl}/zh/report/${resolvedSlug}`,
-        'x-default': `${baseUrl}/report/${resolvedSlug}`,
+        en: `${baseUrl}/report/${slug}`,
+        es: `${baseUrl}/es/report/${slug}`,
+        zh: `${baseUrl}/zh/report/${slug}`,
+        'x-default': `${baseUrl}/report/${slug}`,
       },
     },
   };
@@ -186,6 +187,7 @@ export default async function ReportPage({ params }: Props) {
   const whatMoved = currentSummary.whatMoved;
   const whyItMatters = currentSummary.whyItMatters;
   const peerAssets = currentSummary.peerAssets;
+  const subscriptionsEnabled = Boolean(assetKey && assetLabel && isSubscriptionEmailConfigured());
   const localizedBreadcrumbJsonLd = {
     ...breadcrumbJsonLd,
     itemListElement: renameBreadcrumbItems(
@@ -339,6 +341,11 @@ export default async function ReportPage({ params }: Props) {
                       Open {assetLabel} asset hub &rarr;
                     </Link>
                   </div>
+                  {subscriptionsEnabled ? (
+                    <div className="mt-4">
+                      <SubscribeBox assetKey={assetKey} assetLabel={assetLabel} />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <div>

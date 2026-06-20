@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-const CONTROL_PLANE_PATHS = ['/api/', '/dashboard', '/terminal', '/tools'] as const;
+const CONTROL_PLANE_PATHS = ['/api/', '/dashboard', '/terminal'] as const;
 const LOCALE_PREFIXES = ['/en', '/es', '/zh'] as const;
 
 export default function robots(): MetadataRoute.Robots {

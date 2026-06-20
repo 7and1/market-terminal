@@ -4,14 +4,17 @@ const hasDb = vi.fn();
 const getSession = vi.fn();
 const insertEvent = vi.fn();
 const insertEventBatch = vi.fn();
+const checkRateLimitCounter = vi.fn();
 const getAIConfig = vi.fn();
 const createChatCompletion = vi.fn();
+const getProviderUsage = vi.fn();
 
 vi.mock('@/lib/db', () => ({
   hasDb,
   getSession,
   insertEvent,
   insertEventBatch,
+  checkRateLimitCounter,
 }));
 
 vi.mock('@/lib/ai', () => ({
@@ -19,13 +22,19 @@ vi.mock('@/lib/ai', () => ({
   createChatCompletion,
 }));
 
+vi.mock('@/lib/budget-guard', () => ({
+  getProviderUsage,
+}));
+
 describe('/api/chat POST', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     hasDb.mockReturnValue(true);
     getAIConfig.mockReturnValue({ model: 'test-model' });
+    getProviderUsage.mockResolvedValue({ ok: true, calls: 1, limit: 1500 });
     insertEvent.mockResolvedValue(undefined);
     insertEventBatch.mockResolvedValue(undefined);
+    checkRateLimitCounter.mockResolvedValue({ allowed: true, remaining: 29, limit: 30, resetMs: 60_000 });
   });
 
   it('returns 400 for invalid bodies', async () => {
@@ -82,5 +91,29 @@ describe('/api/chat POST', () => {
 
     expect(response.status).toBe(502);
     expect(json.error).toContain('Chat model request failed');
+  });
+
+  it('returns 503 before model work when the OpenRouter budget is exhausted', async () => {
+    getSession.mockResolvedValue({
+      sessionId: '8d0e2f3d-a338-46a8-bfdc-a626751f6e5f',
+      topic: 'Bitcoin',
+      meta: { mode: 'deep', artifacts: { evidence: [], tape: [], nodes: [], edges: [], clusters: [] } },
+    });
+    getProviderUsage.mockResolvedValue({ ok: false, calls: 1500, limit: 1500 });
+
+    const { POST } = await import('@/app/api/chat/route');
+    const response = await POST(
+      new Request('http://localhost/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: '8d0e2f3d-a338-46a8-bfdc-a626751f6e5f',
+          message: 'What happened?',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(createChatCompletion).not.toHaveBeenCalled();
   });
 });

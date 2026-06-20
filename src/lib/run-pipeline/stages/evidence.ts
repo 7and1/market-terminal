@@ -86,8 +86,8 @@ export async function buildEvidenceHybrid({
   const items = asEvidenceFromSerp(results.slice(0, limit), startedAt);
   if (mode !== 'deep') return items;
 
-  const scrapeCount = Math.min(4, items.length);
-  const scrapeConcurrency = Math.min(2, scrapeCount);
+  const scrapeCount = Math.min(Math.max(1, env.pipeline.deepScrapeCount), items.length);
+  const scrapeConcurrency = Math.min(3, scrapeCount);
   let scrapeFailures = 0;
   let firstFailure = '';
   let scrapeCursor = 0;
@@ -100,7 +100,7 @@ export async function buildEvidenceHybrid({
     try {
       const md = await brightDataRequestMarkdown(ev.url);
       const cleaned = markdownToText(md);
-      const excerpt = pickReadableExcerpt(cleaned, 620);
+      const excerpt = pickReadableExcerpt(cleaned, 1800);
       if (excerpt) {
         ev.excerpt = excerpt;
         ev.excerptSource = 'markdown';
@@ -174,7 +174,8 @@ export async function summarizeEvidence({
   if (!evidence.length) return evidence;
 
   const stageModel = env.ai.openrouter.modelSummaries;
-  const config = getAIConfig({ apiKeyOverride: apiKey, modelOverride: model || stageModel || undefined });
+  const keyOverride = env.ai.allowClientApiKeys ? apiKey : undefined;
+  const config = getAIConfig({ apiKeyOverride: keyOverride, modelOverride: model || stageModel || undefined });
   if (!config) return evidence;
 
   const top = evidence.slice(0, 10).map((e) => ({
@@ -195,6 +196,7 @@ export async function summarizeEvidence({
       system: summariesPrompt.system,
       user: summariesPrompt.user,
       temperature: 0.1,
+      maxTokens: 900,
       telemetry: { tag: 'summaries', onUsage: onAiUsage },
     });
   } catch {

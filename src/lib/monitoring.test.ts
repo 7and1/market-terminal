@@ -7,12 +7,15 @@ const updateMonitorCheckpoint = vi.fn();
 const markMonitorRunRunning = vi.fn();
 const getLatestReadyMonitorRun = vi.fn();
 const getSession = vi.fn();
+const listConfirmedSubscribersByAsset = vi.fn();
 const patchMeta = vi.fn();
 const markMonitorAlertSent = vi.fn();
 const executeRun = vi.fn();
 const promoteReadySessionToPublicHead = vi.fn();
 const getCanonicalHeadByKey = vi.fn();
 const deriveTopicVisibility = vi.fn();
+const isSubscriptionEmailConfigured = vi.fn();
+const sendMonitorAlertEmail = vi.fn();
 const fetchMock = vi.fn();
 
 vi.mock('@/lib/db', () => ({
@@ -23,6 +26,7 @@ vi.mock('@/lib/db', () => ({
   getLatestReadyMonitorRun,
   getMonitor: vi.fn(),
   getSession,
+  listConfirmedSubscribersByAsset,
   markMonitorAlertSent,
   markMonitorRunRunning,
   patchMeta,
@@ -44,6 +48,11 @@ vi.mock('@/lib/topic-catalog', () => ({
 
 vi.mock('@/lib/topic-resolution', () => ({
   deriveTopicVisibility,
+}));
+
+vi.mock('@/lib/email', () => ({
+  isSubscriptionEmailConfigured,
+  sendMonitorAlertEmail,
 }));
 
 vi.mock('@/lib/ai', () => ({
@@ -167,6 +176,7 @@ const baseClaim = {
 describe('executeClaimedMonitorRun', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    delete process.env.NEXT_PUBLIC_SITE_URL;
     vi.stubGlobal('fetch', fetchMock);
     markMonitorRunRunning.mockResolvedValue(undefined);
     completeMonitorRunError.mockResolvedValue(undefined);
@@ -175,6 +185,9 @@ describe('executeClaimedMonitorRun', () => {
     updateMonitorCheckpoint.mockResolvedValue(undefined);
     patchMeta.mockResolvedValue(undefined);
     markMonitorAlertSent.mockResolvedValue(undefined);
+    listConfirmedSubscribersByAsset.mockResolvedValue([]);
+    isSubscriptionEmailConfigured.mockReturnValue(false);
+    sendMonitorAlertEmail.mockResolvedValue(undefined);
     getLatestReadyMonitorRun.mockResolvedValue(null);
     getCanonicalHeadByKey.mockReturnValue({
       key: 'bitcoin',
@@ -184,6 +197,7 @@ describe('executeClaimedMonitorRun', () => {
     deriveTopicVisibility.mockReturnValue({
       visibility: 'public',
       subjectKey: 'bitcoin',
+      assetKey: 'bitcoin',
     });
     promoteReadySessionToPublicHead.mockResolvedValue({
       ok: true,
@@ -373,6 +387,73 @@ describe('executeClaimedMonitorRun', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('/report/bitcoin-2026-03-31-sess'),
+      }),
+    );
+    expect(markMonitorAlertSent).toHaveBeenCalledWith('monitor-1');
+  });
+
+  it('emails confirmed subscribers for significant monitor changes', async () => {
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://trendanalysis.ai';
+    isSubscriptionEmailConfigured.mockReturnValue(true);
+    listConfirmedSubscribersByAsset.mockResolvedValueOnce([
+      { email: 'reader@example.com', assetKey: 'bitcoin', tokenHash: 'a'.repeat(64) },
+    ]);
+    executeRun.mockResolvedValueOnce({
+      ok: true,
+      sessionId: 'current-session',
+      perfSummary: {
+        status: 'ready',
+        generatedAt: Date.now(),
+        totalMs: 12,
+        stepDurationsMs: {},
+        api: [],
+        marksStored: 0,
+      },
+    });
+    getLatestReadyMonitorRun.mockResolvedValueOnce({
+      id: 'run-previous',
+      monitorId: 'monitor-1',
+      sessionId: 'baseline-session',
+      baselineSessionId: null,
+      status: 'ready',
+      changeScore: 82,
+      significant: true,
+      summary: {},
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    getSession
+      .mockResolvedValueOnce({
+        ...buildHighChangeSession('current-session', 'BTC'),
+        slug: 'bitcoin-2026-03-31-sess',
+      })
+      .mockResolvedValueOnce({
+        ...buildSession('baseline-session', 'BTC', 'https://www.reuters.com/world/us/bitcoin-baseline'),
+        meta: {
+          mode: 'deep',
+          artifacts: {
+            evidence: [],
+            tape: [],
+            nodes: [],
+            edges: [],
+            clusters: [],
+          },
+        },
+      });
+
+    const { executeClaimedMonitorRun } = await import('@/lib/monitoring');
+
+    await executeClaimedMonitorRun({ claim: baseClaim });
+
+    expect(listConfirmedSubscribersByAsset).toHaveBeenCalledWith('bitcoin');
+    expect(sendMonitorAlertEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'reader@example.com',
+        assetKey: 'bitcoin',
+        reportUrl: 'https://trendanalysis.ai/report/bitcoin-2026-03-31-sess',
+        unsubscribeUrl: 'https://trendanalysis.ai/api/subscribe/unsubscribe?hash=' + 'a'.repeat(64),
       }),
     );
     expect(markMonitorAlertSent).toHaveBeenCalledWith('monitor-1');

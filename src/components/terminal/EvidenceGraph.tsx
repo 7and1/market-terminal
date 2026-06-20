@@ -104,6 +104,7 @@ function toneForNode(type: NodeType) {
 }
 
 function edgeStroke(edge: GraphEdge) {
+  if (edge.origin === 'heuristic' && !(edge.evidenceIds || []).length) return 'rgba(255,255,255,0.14)';
   if (edge.type === 'mentions') return 'rgba(255,255,255,0.18)';
   if (edge.type === 'co_moves') return 'rgba(0,102,255,0.34)';
   if (edge.type === 'hypothesis') return 'rgba(255,82,28,0.34)';
@@ -425,7 +426,7 @@ export function EvidenceGraph({
           linkColor={linkColor}
           linkWidth={linkWidth}
           linkCurvature={(l) => (l.type === 'same_story' ? 0.18 : 0.06)}
-          linkLineDash={(l) => (l.type === 'hypothesis' ? [4, 4] : null)}
+          linkLineDash={(l) => (l.origin === 'heuristic' || !(l.evidenceIds || []).length || l.type === 'hypothesis' ? [4, 4] : null)}
           linkDirectionalArrowLength={(l) => (l.type === 'hypothesis' ? 4 : 0)}
           linkDirectionalArrowRelPos={0.95}
           linkHoverPrecision={10}
@@ -442,7 +443,11 @@ export function EvidenceGraph({
             onSelectEdge(null);
           }}
           nodeLabel={(n) => `${n.label} (${prettyType(n.type, t)})`}
-          linkLabel={(l) => `${l.type.replace(/_/g, ' ')} · ${Math.round(l.confidence * 100)}%`}
+          linkLabel={(l) =>
+            `${l.type.replace(/_/g, ' ')} · ${Math.round(l.confidence * 100)}%${
+              l.origin === 'heuristic' || !(l.evidenceIds || []).length ? ` · ${t('inferredEdge')}` : ''
+            }`
+          }
         />
 
         <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full border border-white/10 bg-[#070b14]/70 px-3 py-1 text-[11px] text-white/65 backdrop-blur">

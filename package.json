@@ -5,14 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:cf": "npx @opennextjs/cloudflare build",
-    "preview:cf": "npx wrangler dev",
     "preview:openclaw": "bash scripts/openclaw-preview.sh",
-    "deploy:cf": "npx wrangler pages deploy",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --pool=forks --poolOptions.forks.maxForks=1 --poolOptions.forks.minForks=1",
     "test:watch": "vitest",
     "test:browser": "playwright test --config playwright.config.ts",
     "test:browser:install": "playwright install chromium",
@@ -49,7 +46,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.51.1",
-    "@opennextjs/cloudflare": "1.17.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.11.11",

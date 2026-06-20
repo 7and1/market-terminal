@@ -1,13 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 
 import type { QueryQueueItem, ScrapeQueueItem } from '@/components/terminal/ActivityCard';
 import type { PipelineStep, SearchEvent } from '@/components/terminal/PipelineTimeline';
 import {
   appendUsageEvent,
   applyQueryQueueCompletion,
-  buildSeries,
   consumeSseStream,
   isUuid,
   now,
@@ -78,6 +78,7 @@ export function useTerminalRun({
   replaceUrlWithSessionId: (sessionId: string) => void;
   resetInteractiveView: () => void;
 }) {
+  const t = useTranslations('terminal');
   const [running, setRunning] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
@@ -100,7 +101,21 @@ export function useTerminalRun({
 
   const start = useCallback(
     async (rawTopic: string, question?: string, options?: StartRunOptions) => {
-      const cleaned = rawTopic.trim() || 'Bitcoin';
+      const cleaned = rawTopic.trim();
+      if (!cleaned) {
+        const message = t('emptyTopic');
+        store.setWarnings((prev) => [message, ...prev].slice(0, 4));
+        store.setMessages((prev) => [
+          ...prev,
+          {
+            id: `m_${Math.random().toString(16).slice(2)}`,
+            role: 'assistant',
+            content: message,
+            createdAt: now(),
+          },
+        ]);
+        return;
+      }
       const cleanedQ = typeof question === 'string' ? question.trim() : '';
       const normalizedLocale = normalizeQueryLocale(locale);
       const scope = assessMarketQueryScope({
@@ -158,7 +173,6 @@ export function useTerminalRun({
       const localId = `local_${Math.random().toString(16).slice(2)}`;
       let resolvedSessionId = localId;
       let didComplete = false;
-      const { y, t } = buildSeries(startedAtLocal);
 
       store.setSession({
         id: localId,
@@ -171,8 +185,8 @@ export function useTerminalRun({
         nodes: [],
         edges: [],
         evidence: [],
-        series: y,
-        seriesTs: t,
+        series: [],
+        seriesTs: [],
       });
 
       try {
@@ -215,7 +229,6 @@ export function useTerminalRun({
               resolvedSessionId = sessionId;
               const serverTopic = typeof d.topic === 'string' ? d.topic : cleaned;
               const serverStartedAt = typeof d.startedAt === 'number' ? d.startedAt : startedAtLocal;
-              const series = buildSeries(serverStartedAt);
               store.setTerminalMode('live');
               store.setRunMeta({ mode: serverMode, provider });
               store.setTopic(serverTopic);
@@ -223,7 +236,7 @@ export function useTerminalRun({
               setSummariesCount(0);
               store.setSession((prev) =>
                 prev
-                  ? { ...prev, id: sessionId, topic: serverTopic, startedAt: serverStartedAt, series: series.y, seriesTs: series.t }
+                  ? { ...prev, id: sessionId, topic: serverTopic, startedAt: serverStartedAt, series: [], seriesTs: [] }
                   : {
                       id: sessionId,
                       topic: serverTopic,
@@ -235,8 +248,8 @@ export function useTerminalRun({
                       nodes: [],
                       edges: [],
                       evidence: [],
-                      series: series.y,
-                      seriesTs: series.t,
+                      series: [],
+                      seriesTs: [],
                     },
               );
               if (isUuid(sessionId)) replaceUrlWithSessionId(sessionId);
@@ -567,7 +580,7 @@ export function useTerminalRun({
         }
       }
     },
-    [debugBrowserLogs, locale, replaceUrlWithSessionId, resetInteractiveView, store],
+    [debugBrowserLogs, locale, replaceUrlWithSessionId, resetInteractiveView, store, t],
   );
 
   const rerun = useCallback(() => {

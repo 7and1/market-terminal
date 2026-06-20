@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getReportHead = vi.fn();
+const listApprovedDynamicCatalogHeads = vi.fn();
 const listPublished = vi.fn();
 const listCurrentPublished = vi.fn();
 const listQueryAliases = vi.fn();
@@ -13,6 +14,7 @@ const chatJson = vi.fn();
 
 vi.mock('@/lib/db', () => ({
   getReportHead,
+  listApprovedDynamicCatalogHeads,
   listPublished,
   listCurrentPublished,
   listQueryAliases,
@@ -84,6 +86,7 @@ describe('topic-resolution', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     hasDb.mockReturnValue(true);
+    listApprovedDynamicCatalogHeads.mockResolvedValue([]);
     listPublished.mockResolvedValue([]);
     listCurrentPublished.mockResolvedValue([]);
     listQueryAliases.mockResolvedValue([]);
@@ -121,6 +124,38 @@ describe('topic-resolution', () => {
     });
   });
 
+  it('resolves an approved dynamic catalog head as a public run target', async () => {
+    listApprovedDynamicCatalogHeads.mockResolvedValue([
+      {
+        key: 'ai-healthcare-stocks',
+        label: 'AI Healthcare Stocks',
+        assetKey: 'ai-healthcare-stocks',
+        reportKey: 'ai-healthcare-stocks-general',
+        publicSurface: 'asset_hub',
+        priorityTier: 'secondary',
+        aliases: ['AI healthcare stocks'],
+        status: 'approved',
+        score: 3,
+        meta: {},
+        createdAt: '2026-03-26T10:00:00.000Z',
+        updatedAt: '2026-03-26T10:00:00.000Z',
+      },
+    ]);
+
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({ input: 'AI healthcare stocks', surface: 'terminal' });
+
+    expect(result).toMatchObject({
+      decision: 'run',
+      canonicalLabel: 'AI Healthcare Stocks',
+      reportKey: 'ai-healthcare-stocks-general',
+      visibility: 'public',
+      publicSurface: 'asset_hub',
+      priorityTier: 'secondary',
+      assetKey: 'ai-healthcare-stocks',
+    });
+  });
+
   it('reuses an asset hub for a broad subject hit', async () => {
     listCurrentPublished.mockResolvedValue([
       buildCurrentReport({
@@ -140,6 +175,101 @@ describe('topic-resolution', () => {
       assetKey: 'bitcoin',
       publicSurface: 'asset_hub',
       priorityTier: 'v1',
+    });
+  });
+
+  it('keeps canonical public asset why-queries on a public head instead of marking them ambiguous', async () => {
+    listCurrentPublished.mockResolvedValue([
+      buildCurrentReport({
+        topic: 'Gold',
+        assetKey: 'gold',
+        reportKey: 'gold-general',
+        canonicalLabel: 'Gold',
+        slug: 'gold-2026-03-26-abcd',
+      }),
+    ]);
+
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({
+      input: 'Why is gold moving today? Focus on yields, the dollar, safe-haven demand, and inflation signals.',
+      surface: 'terminal',
+    });
+
+    expect(result).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      assetKey: 'gold',
+      publicSurface: 'asset_hub',
+      reportKey: 'gold-price-move',
+    });
+  });
+
+  it('keeps canonical macro asset why-queries public even when they mention fed or rates context', async () => {
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({
+      input: 'Why is DXY moving today? Focus on rates, Fed pricing, and cross-asset transmission.',
+      surface: 'terminal',
+    });
+
+    expect(result).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      assetKey: 'dxy',
+      reportKey: 'dxy-price-move',
+    });
+  });
+
+  it('keeps fed and cpi anchored subject prompts on public canonical heads', async () => {
+    const { resolveTopicQuery } = await loadModule();
+    const fed = await resolveTopicQuery({
+      input: 'What is the latest Fed read-through for markets right now? Focus on policy path, rates, dollar, and equity spillovers.',
+      surface: 'terminal',
+    });
+    const cpi = await resolveTopicQuery({
+      input: 'What is the latest CPI market impact? Track rates, dollar, equities, and gold read-through.',
+      surface: 'terminal',
+    });
+
+    expect(fed).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      assetKey: 'fed',
+      reportKey: 'fed-price-move',
+    });
+    expect(cpi).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      assetKey: 'cpi',
+      reportKey: 'cpi-price-move',
+    });
+  });
+
+  it('keeps canonical single-stock why-queries public when peer-sector context appears in the prompt', async () => {
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({
+      input: 'Why is NVDA moving today? Track earnings, AI demand, semis read-through, and policy risk.',
+      surface: 'terminal',
+    });
+
+    expect(result).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      assetKey: 'nvda',
+      reportKey: 'nvda-earnings-impact',
+    });
+  });
+
+  it('falls back to deterministic public run decisions when the resolution catalog cannot load', async () => {
+    listCurrentPublished.mockRejectedValue(new Error('timeout exceeded when trying to connect'));
+
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({ input: 'Why is BTC moving today?', surface: 'landing' });
+
+    expect(result).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      assetKey: 'bitcoin',
+      reportKey: 'bitcoin-price-move',
     });
   });
 
@@ -184,6 +314,22 @@ describe('topic-resolution', () => {
       expect(first.reportKey).toBe('gold-vs-bitcoin-comparison');
       expect(second.reportKey).toBe('gold-vs-bitcoin-comparison');
     }
+  });
+
+  it('keeps detailed curated comparison prompts on the public comparison head instead of reusing an asset hub', async () => {
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({
+      input: 'Gold vs Bitcoin: which macro drivers matter more right now, and what changed since the last update?',
+      surface: 'terminal',
+    });
+
+    expect(result).toMatchObject({
+      decision: 'run',
+      visibility: 'public',
+      canonicalLabel: 'Gold vs Bitcoin',
+      reportKey: 'gold-vs-bitcoin-comparison',
+      assetKey: 'gold',
+    });
   });
 
   it('fails closed for explicit multi-subject comparison queries', async () => {
@@ -307,6 +453,16 @@ describe('topic-resolution', () => {
       expect(result.canonicalLabel).toContain('Gold');
       expect(result.canonicalLabel).toContain('Ethereum');
     }
+  });
+
+  it('does not surface non-curated comparison prompts as ambiguous asset reuse candidates', async () => {
+    const { resolveTopicQuery } = await loadModule();
+    const result = await resolveTopicQuery({ input: 'Bitcoin vs NVDA today', surface: 'terminal' });
+
+    expect(result).toMatchObject({
+      decision: 'run_private',
+      visibility: 'private',
+    });
   });
 
   it('localizes private-only query messaging when locale is provided', async () => {

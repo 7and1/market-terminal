@@ -13,6 +13,8 @@ import { SentimentBadge } from '@/components/ui/sentiment-badge';
 import { MomentumBadge } from '@/components/ui/momentum-badge';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { SubscribeBox } from '@/components/public/SubscribeBox';
+import { isSubscriptionEmailConfigured } from '@/lib/email';
 import { getAssetHubProjection } from '@/lib/public-read-model';
 
 type Props = { params: Promise<{ locale: string; key: string }> };
@@ -197,14 +199,17 @@ export default async function AssetPage({ params }: Props) {
 
   const {
     aggregation: agg,
+    archiveDates,
     comparisonCards,
     currentLabel,
     currentSummary,
     latestPublishedAt,
     latestReportHref,
+    monitorTimeline,
     structuredData,
     terminalSnapshotHref,
   } = projection;
+  const subscriptionsEnabled = isSubscriptionEmailConfigured();
   const intro =
     `Start here for the current baseline, recurring catalysts, source footing, and archive of published analyses for ${capitalizedLabel}.`;
   const localizedStructuredData = structuredData.map((item) => {
@@ -480,6 +485,71 @@ export default async function AssetPage({ params }: Props) {
           </section>
 
           <div className="space-y-4">
+            {subscriptionsEnabled ? (
+              <section>
+                <SectionLabel className="mb-3">Email Alerts</SectionLabel>
+                <SubscribeBox assetKey={key} assetLabel={capitalizedLabel} />
+              </section>
+            ) : null}
+
+            {monitorTimeline.length > 0 ? (
+              <section>
+                <SectionLabel className="mb-3">Change Timeline</SectionLabel>
+                <Card className="p-4">
+                  <div className="space-y-3">
+                    {monitorTimeline.map((item) => (
+                      <div key={`${item.monitorId}-${item.date}`} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-white/82">
+                              {item.headline || item.monitorName || item.topic}
+                            </div>
+                            <div className="mt-1 text-[11px] text-white/42">
+                              {formatDateTime(dateFmt, item.date)}
+                            </div>
+                          </div>
+                          {typeof item.changeScore === 'number' ? (
+                            <Badge variant={item.significant ? 'orange' : 'neutral'}>Score {item.changeScore}</Badge>
+                          ) : null}
+                        </div>
+                        {item.summary ? (
+                          <p className="mt-2 text-xs leading-relaxed text-white/56">{item.summary}</p>
+                        ) : null}
+                        {item.reportHref ? (
+                          <Link
+                            href={item.reportHref}
+                            className="mt-2 inline-flex text-xs text-[rgba(120,196,255,0.85)] transition hover:text-white/80"
+                          >
+                            Open monitored report &rarr;
+                          </Link>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </section>
+            ) : null}
+
+            {archiveDates.length > 0 ? (
+              <section>
+                <SectionLabel className="mb-3">Archive</SectionLabel>
+                <Card className="p-4">
+                  <div className="grid gap-2">
+                    {archiveDates.slice(0, 30).map((item) => (
+                      <Link
+                        key={item.date}
+                        href={`/asset/${key}/archive/${item.date}`}
+                        className="flex items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-white/76 transition hover:border-white/15 hover:bg-white/[0.05]"
+                      >
+                        <span>{formatDate(dateFmt, Date.parse(`${item.date}T00:00:00.000Z`))}</span>
+                        <span className="text-xs text-[rgba(120,196,255,0.85)]">Open snapshot &rarr;</span>
+                      </Link>
+                    ))}
+                  </div>
+                </Card>
+              </section>
+            ) : null}
+
             {comparisonCards.length > 0 ? (
               <section>
                 <SectionLabel className="mb-3">Related Comparison Heads</SectionLabel>

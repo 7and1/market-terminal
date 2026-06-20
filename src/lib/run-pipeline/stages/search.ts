@@ -6,6 +6,7 @@ export async function runSearchStage({
   mode,
   serpResponseFormat,
   signal,
+  locale,
   onDiag,
   onWarn,
   onPartial,
@@ -14,6 +15,7 @@ export async function runSearchStage({
   mode: 'fast' | 'deep';
   serpResponseFormat: 'light_json_google' | 'full_json_google' | 'markdown';
   signal: AbortSignal;
+  locale?: string | null;
   onDiag: (stage: string, details?: Record<string, unknown>) => void;
   onWarn: (payload: { message: string; query?: string }) => void;
   onPartial: (payload: { query: string; added: number; found: number; picked: SerpResult[]; vertical: 'web' | 'news' }) => void;
@@ -30,6 +32,7 @@ export async function runSearchStage({
     vertical: searchVertical,
     recency: searchRecency,
     format: serpResponseFormat,
+    locale: locale || 'en',
   });
 
   const runQuery = async (query: string) => {
@@ -41,6 +44,7 @@ export async function runSearchStage({
         format: serpResponseFormat,
         vertical: searchVertical,
         recency: searchRecency,
+        locale,
       });
 
       let finalResults = results;
@@ -53,6 +57,7 @@ export async function runSearchStage({
             format: serpResponseFormat,
             vertical: 'web',
             recency: 'd',
+            locale,
           });
           if (fallback.length) {
             finalResults = fallback;
@@ -65,7 +70,7 @@ export async function runSearchStage({
       }
 
       serp = serp.concat(finalResults);
-      const partialPicked = pickSerpDiverse(serp, mode === 'deep' ? 14 : 12).map((r) => ({
+      const partialPicked = pickSerpDiverse(serp, mode === 'deep' ? 14 : 12, queries.join(' ')).map((r) => ({
         title: r.title || r.url,
         url: r.url,
         snippet: r.snippet,

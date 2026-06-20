@@ -1,6 +1,7 @@
 import type { SerpResult } from '@/lib/brightdata';
 import { parsePublishedAtFromSnippet } from '@/lib/pipeline-time';
 import type { EvidenceItem } from '@/lib/run-pipeline/contracts';
+import { getTopicSearchHints } from '@/lib/topic-catalog';
 
 export function sleep(ms: number, signal?: AbortSignal) {
   if (signal?.aborted) return Promise.reject(new Error('aborted'));
@@ -51,28 +52,41 @@ function uniqueByUrl(results: SerpResult[], limit: number) {
   return out;
 }
 
-function scoreSerpResult(result: SerpResult): number {
+function termMatches(text: string, term: string): boolean {
+  const normalized = String(term || '').toLowerCase().trim();
+  if (!normalized) return false;
+  if (/^[a-z0-9]+$/.test(normalized)) {
+    return new RegExp(`\\b${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text);
+  }
+  return text.includes(normalized);
+}
+
+function scoreSerpResult(result: SerpResult, topic?: string): number {
   const domain = domainFromUrl(result.url);
   const hay = `${result.title || ''} ${result.snippet || ''}`.toLowerCase();
+  const hints = topic ? getTopicSearchHints(topic) : null;
 
   let score = 0;
   if (/\b(today|latest|update|breaking|hours?|day|week)\b/.test(hay)) score += 2;
   if (/\b(news|headline|rumou?r|report|filing|approval|lawsuit)\b/.test(hay)) score += 2;
-  if (/\b(etf|sec|fed|cpi|inflation|rates?|yield|treasury|dxy|dollar|gold|xau|oil|wti|brent)\b/.test(hay)) score += 2;
-  if (/\b(spillover|stocks?|equities?|miners?|nasdaq|s\\&p|spx|dow|microstrategy|mstr|treasur(y|ies)|bonds?|futures|funding)\b/.test(hay)) score += 1.2;
-  if (/\b(price|chart|quote|market cap|live)\b/.test(hay)) score += 0.5;
-  if (/(reuters|bloomberg|cnbc|ft\.com|wsj\.com|coindesk|theblock|decrypt|cointelegraph|investopedia)\b/.test(domain)) score += 1.5;
-  if (/(coinmarketcap|tradingview|coingecko|coinbase|bitflyer|kraken|binance|okx)\b/.test(domain)) score -= 0.4;
+  if (/\b(earnings|guidance|policy|regulation|macro|supply|demand|inventory|geopolitics|sentiment|analyst|forecast)\b/.test(hay)) score += 1.2;
+  if (/\b(price|chart|quote|market cap|live)\b/.test(hay)) score += 0.35;
+  if (/(reuters|bloomberg|cnbc|ft\.com|wsj\.com|investopedia)\b/.test(domain)) score += 1.5;
+  if (hints?.preferredDomains?.some((preferred) => domain.includes(preferred.toLowerCase()))) score += 1.5;
+  if (hints?.domainKeywords?.some((term) => termMatches(hay, term))) score += 2;
+  if (hints?.impactKeywords?.some((term) => termMatches(hay, term))) score += 1.2;
+  if (hints?.knownActors?.some((actor) => termMatches(hay, actor))) score += 1;
+  if (/(tradingview|marketwatch|investing\.com)\b/.test(domain)) score -= 0.4;
   if (/(perplexity\.ai|arxiv\.org|wikipedia\.org|github\.com|quora\.com|medium\.com)\b/.test(domain)) score -= 2.2;
   if (/(reddit\.com)\b/.test(domain)) score -= 1.2;
 
   return score;
 }
 
-export function pickSerpDiverse(results: SerpResult[], limit: number) {
+export function pickSerpDiverse(results: SerpResult[], limit: number, topic?: string) {
   const uniq = uniqueByUrl(results, 80);
   const ranked = uniq
-    .map((result) => ({ result, score: scoreSerpResult(result) }))
+    .map((result) => ({ result, score: scoreSerpResult(result, topic) }))
     .sort((a, b) => b.score - a.score)
     .map((entry) => entry.result);
 

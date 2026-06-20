@@ -25,12 +25,20 @@ import { Button } from '@/components/ui/Button';
 import { getLandingExamples } from '@/lib/query-copy';
 import { apiPath } from '@/lib/utils';
 
+const LAST_SESSION_KEY = 'market_terminal:last_session_id';
+
 const SENTIMENT_DOT: Record<string, string> = {
   bullish: 'bg-emerald-400',
   bearish: 'bg-red-400',
   mixed: 'bg-amber-400',
   neutral: 'bg-white/40',
 };
+
+const REPORT_ROW_DOTS = ['bg-emerald-400/80', 'bg-amber-400/80', 'bg-[var(--blue)]'];
+
+function isLikelySessionId(raw: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw);
+}
 
 type TrendingTopic = {
   assetKey: string;
@@ -48,6 +56,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
   const t = useTranslations('landing');
   const tc = useTranslations('common');
   const landingExamples = getLandingExamples(locale);
+  const publishedReportTopics = trendingTopics.slice(0, 3);
   const flowSteps = [
     {
       step: '01',
@@ -71,10 +80,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
   const [resolution, setResolution] = useState<QueryResolutionPanelState | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
-  const [lastSessionId] = useState(() => {
-    if (typeof window === 'undefined') return '';
-    return window.localStorage.getItem('market_terminal:last_session_id') || '';
-  });
+  const [lastSessionId, setLastSessionId] = useState('');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -91,7 +97,49 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
   }, [router]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = (window.localStorage.getItem(LAST_SESSION_KEY) || '').trim();
+    if (!stored) return;
+    if (!isLikelySessionId(stored)) {
+      window.localStorage.removeItem(LAST_SESSION_KEY);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const validateStoredSession = async () => {
+      const params = new URLSearchParams({ sessionId: stored, limit: '1' });
+      try {
+        const res = await fetch(apiPath(`/api/sessions/events?${params.toString()}`), {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (cancelled) return;
+        if (res.ok) {
+          setLastSessionId(stored);
+          return;
+        }
+        if ([400, 403, 404].includes(res.status)) {
+          window.localStorage.removeItem(LAST_SESSION_KEY);
+        }
+        setLastSessionId('');
+      } catch {
+        if (!cancelled) setLastSessionId('');
+      }
+    };
+
+    void validateStoredSession();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, []);
+
+  useEffect(() => {
     if (query.trim()) return;
+    if (landingExamples.length === 0) return;
 
     let stopped = false;
     let timer: number | null = null;
@@ -204,8 +252,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
       <PageBackground />
       <SiteHeader />
 
-      {/* Hero */}
-      <main className="mx-auto max-w-[980px] px-4 pb-14 pt-14 sm:pt-20 flex-1">
+      <main className="mx-auto max-w-[1120px] px-4 pb-14 pt-12 sm:pt-20 flex-1">
         <div className="relative">
           <div className="pointer-events-none absolute -inset-6 sm:-inset-10">
             <TrendingUp className="finance-float absolute left-[4%] top-[8%] h-7 w-7 text-[rgba(120,196,255,0.35)]" style={{ animationDelay: '0.1s' }} />
@@ -214,9 +261,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
             <BarChart3 className="finance-float absolute right-[8%] top-[68%] h-6 w-6 text-[rgba(120,196,255,0.3)]" style={{ animationDelay: '1.2s' }} />
           </div>
 
-          <Card className="relative overflow-hidden rounded-[32px] p-8 sm:p-12 shadow-[0_40px_120px_-70px_rgba(0,0,0,0.55)]">
-          <div className="panel-sheen absolute inset-0 rounded-[32px]" />
-          <div className="relative text-center">
+          <section className="relative overflow-hidden py-4 text-center sm:py-8">
             <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-[rgba(0,102,255,0.45)] bg-[rgba(0,102,255,0.12)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[rgba(182,220,255,0.95)]">
               <Sparkles className="h-3.5 w-3.5" />
               {t('badge')}
@@ -238,7 +283,8 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
             </div>
 
             <form
-              className="mx-auto mt-7 max-w-[860px] rounded-2xl border border-white/12 bg-black/20 p-2 sm:p-2.5"
+              className="mx-auto mt-7 max-w-[860px] rounded-xl border border-white/12 bg-black/28 p-2 shadow-[0_24px_90px_-58px_rgba(0,102,255,0.7)] sm:p-2.5"
+              aria-busy={resolving}
               onSubmit={(e) => {
                 e.preventDefault();
                 runSearch();
@@ -265,7 +311,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
                   size="lg"
                   className="border-[rgba(0,102,255,0.42)] bg-[rgba(0,102,255,0.2)] text-[rgba(199,228,255,0.98)] hover:bg-[rgba(0,102,255,0.28)]"
                 >
-                  {tc('analyze')}
+                  {resolving ? t('resolvingCta') : tc('analyze')}
                   <ArrowUpRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -313,7 +359,7 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
               {flowSteps.map((item) => (
                 <div
                   key={item.step}
-                  className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"
+                  className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3"
                 >
                   <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[rgba(182,220,255,0.72)]">
                     {item.step}
@@ -518,24 +564,29 @@ export default function LandingClient({ trendingTopics = [] }: { trendingTopics?
                   {t('publishedReports')}
                 </div>
                 <p className="mt-2 text-[11px] text-white/50">{t('publishedReportsDesc')}</p>
-                <div className="mt-3 space-y-2">
-                  <div className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.04] px-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/80" />
-                    <span className="text-[9px] text-white/50 truncate">{t('reportSample1')}</span>
+                {publishedReportTopics.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {publishedReportTopics.map((topic, index) => (
+                      <Link
+                        key={topic.assetKey}
+                        href={`/asset/${topic.assetKey}`}
+                        className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.04] px-2 text-left transition hover:border-white/20 hover:bg-white/[0.06]"
+                      >
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${REPORT_ROW_DOTS[index] ?? REPORT_ROW_DOTS[0]}`} />
+                        <span className="truncate text-[9px] text-white/50">
+                          {topic.label.charAt(0).toUpperCase() + topic.label.slice(1)}
+                        </span>
+                      </Link>
+                    ))}
                   </div>
-                  <div className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400/80" />
-                    <span className="text-[9px] text-white/50 truncate">{t('reportSample2')}</span>
+                ) : (
+                  <div className="mx-auto mt-3 flex min-h-20 w-[92%] items-center justify-center rounded-lg border border-dashed border-white/12 bg-white/[0.025] px-3 text-[11px] leading-relaxed text-white/45">
+                    {tc('noPublishedAnalyses')}
                   </div>
-                  <div className="mx-auto flex h-7 w-[92%] items-center gap-2 rounded-lg border border-white/12 bg-white/[0.025] px-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--blue)]" />
-                    <span className="text-[9px] text-white/50 truncate">{t('reportSample3')}</span>
-                  </div>
-                </div>
+                )}
               </Card>
             </div>
-          </div>
-        </Card>
+          </section>
         </div>
       </main>
 

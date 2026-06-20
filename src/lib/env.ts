@@ -21,10 +21,42 @@ function envBool(name: string, fallback = false): boolean {
   return v.toLowerCase() === 'true' || v === '1' || v.toLowerCase() === 'yes';
 }
 
+function envInt(name: string, fallback: number): number {
+  const raw = envString(name);
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function envList(name: string, fallback = ''): string[] {
+  const raw = envString(name, fallback);
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export const env = {
   features: {
     queryResolution: envBool('ENABLE_QUERY_RESOLUTION', true),
     queryResolutionTieBreaker: envBool('ENABLE_QUERY_RESOLUTION_TIEBREAKER', false),
+  },
+  pipeline: {
+    minEvidenceForReady: envInt('MIN_EVIDENCE_FOR_READY', 3),
+    rawDocReuseHours: envInt('RAW_DOC_REUSE_HOURS', 6),
+    deepScrapeCount: envInt('DEEP_SCRAPE_COUNT', 8),
+  },
+  budget: {
+    dailyBrightDataCallLimit: envInt('DAILY_BRIGHTDATA_CALL_LIMIT', 2000),
+    dailyOpenRouterCallLimit: envInt('DAILY_OPENROUTER_CALL_LIMIT', 1500),
+  },
+  rateLimit: {
+    backend: envString('RATE_LIMIT_BACKEND', 'pg'),
+  },
+  email: {
+    resendApiKey: envString('RESEND_API_KEY'),
+    from: envString('EMAIL_FROM', 'TrendAnalysis.ai <alerts@trendanalysis.ai>'),
+    replyTo: envString('EMAIL_REPLY_TO'),
   },
   brightdata: {
     token: envString('BRIGHTDATA_API_TOKEN') || envString('API_TOKEN'),
@@ -44,7 +76,11 @@ export const env = {
     openrouter: {
       get apiKey() { return rotateKey('OPENROUTER_API_KEY'); },
       baseURL: envString('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1'),
-      model: envString('OPENROUTER_MODEL', 'google/gemini-3-flash-preview'),
+      model: envString('OPENROUTER_MODEL', 'deepseek/deepseek-chat-v3.1'),
+      modelFallbacks: envList(
+        'OPENROUTER_MODEL_FALLBACKS',
+        'deepseek/deepseek-chat-v3.1,mistralai/mistral-small-3.2-24b-instruct',
+      ),
       modelFast: envString('OPENROUTER_MODEL_FAST', ''),
       modelDeep: envString('OPENROUTER_MODEL_DEEP', ''),
       modelPlan: envString('OPENROUTER_MODEL_PLAN', ''),

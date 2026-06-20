@@ -80,7 +80,7 @@ const endpointDefinitions: EndpointDefinition[] = [
     title: 'SERP Search',
     description: 'Normalized Bright Data-backed web or news search results.',
     defaults: {
-      q: 'bitcoin',
+      q: 'NVDA earnings',
       vertical: 'news',
       recency: 'd',
       format: 'light',
@@ -90,7 +90,7 @@ const endpointDefinitions: EndpointDefinition[] = [
         name: 'q',
         label: 'Query',
         kind: 'text',
-        placeholder: 'bitcoin, NVDA earnings, Fed meeting',
+        placeholder: 'NVDA earnings, Fed meeting, oil market',
       },
       {
         name: 'vertical',
@@ -157,7 +157,7 @@ const endpointDefinitions: EndpointDefinition[] = [
         name: 'topic',
         label: 'Topic',
         kind: 'text',
-        placeholder: 'NVDA, bitcoin, Fed meeting',
+        placeholder: 'NVDA, Fed meeting, oil market',
       },
       {
         name: 'limit',

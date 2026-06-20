@@ -1,9 +1,12 @@
 import {
+  getAssetDailyMetric,
   getPublishedReportBySlug,
   hasDb,
+  listAssetDailyMetrics,
   listByAsset,
   listCurrentPublished,
   listCurrentPublishedByAsset,
+  listPublicMonitorTimelineByAsset,
   listPublished,
   type CurrentPublishedReportRow,
   type PublishedReportRecord,
@@ -69,6 +72,18 @@ export type ComparisonCard = {
   lastUpdatedAt: number | null;
 };
 
+export type MonitorTimelineItem = {
+  monitorId: string;
+  monitorName: string;
+  topic: string;
+  date: number;
+  changeScore: number | null;
+  significant: boolean;
+  headline: string | null;
+  summary: string | null;
+  reportHref: string | null;
+};
+
 export type LandingProjection = {
   trendingTopics: TrendingTopic[];
 };
@@ -102,6 +117,26 @@ export type AssetHubProjection =
       latestReportHref: string | null;
       terminalSnapshotHref: string;
       comparisonCards: ComparisonCard[];
+      monitorTimeline: MonitorTimelineItem[];
+      archiveDates: Array<{ date: string; updatedAt: string }>;
+      structuredData: Record<string, unknown>[];
+    };
+
+export type AssetArchiveProjection =
+  | {
+      status: 'missing_db' | 'not_found' | 'unavailable';
+      label: string;
+      capitalizedLabel: string;
+      date: string;
+    }
+  | {
+      status: 'ok';
+      label: string;
+      capitalizedLabel: string;
+      date: string;
+      pageUrl: string;
+      aggregation: AssetAggregation;
+      latestReportHref: string | null;
       structuredData: Record<string, unknown>[];
     };
 
@@ -243,6 +278,39 @@ function buildPublishedComparisonCards(
     });
 }
 
+function asOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function toMonitorTimelineItem(row: Awaited<ReturnType<typeof listPublicMonitorTimelineByAsset>>[number]): MonitorTimelineItem {
+  return {
+    monitorId: row.monitorId,
+    monitorName: row.monitorName,
+    topic: row.topic,
+    date: Date.parse(row.createdAt),
+    changeScore: row.changeScore,
+    significant: Boolean(row.significant),
+    headline: asOptionalString(row.summary.headline),
+    summary: asOptionalString(row.summary.summary),
+    reportHref: row.slug ? `/report/${row.slug}` : null,
+  };
+}
+
+function asAssetAggregation(value: unknown): AssetAggregation | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as AssetAggregation;
+  if (typeof candidate.assetKey !== 'string') return null;
+  if (typeof candidate.totalAnalyses !== 'number') return null;
+  if (!Array.isArray(candidate.reports)) return null;
+  if (!Array.isArray(candidate.sentimentTrend)) return null;
+  if (!Array.isArray(candidate.topCatalysts)) return null;
+  if (!Array.isArray(candidate.topEntities)) return null;
+  if (!Array.isArray(candidate.latestClusters)) return null;
+  if (!Array.isArray(candidate.peerAssets)) return null;
+  if (!Array.isArray(candidate.faq)) return null;
+  return candidate;
+}
+
 export async function getLandingProjection(): Promise<LandingProjection> {
   if (!hasDb()) {
     return { trendingTopics: [] };
@@ -357,8 +425,9 @@ export async function getAssetHubProjection(key: string, locale: string): Promis
     };
   }
 
-  const [sessions, currentReports, currentPublished] = await Promise.all([
+  const [sessions, metricRows, currentReports, currentPublished] = await Promise.all([
     listByAsset(key).then(filterPublishableSessions).catch(() => null),
+    listAssetDailyMetrics(key, 30).catch(() => []),
     listCurrentPublishedByAsset(key, 1).catch(() => []),
     listCurrentPublished(240).catch(() => []),
   ]);
@@ -386,10 +455,18 @@ export async function getAssetHubProjection(key: string, locale: string): Promis
   const currentSummary = summarizePublishedSession(latestPublishedSession, {
     displayTopic: currentLabel,
   });
-  const aggregation = aggregateAssetData(sessions, key);
+  const metricAggregation = asAssetAggregation(metricRows[0]?.summary);
+  const aggregation = metricAggregation || aggregateAssetData(sessions, key);
+  const archiveDates = metricRows.map((row) => ({
+    date: row.metricDate,
+    updatedAt: row.updatedAt,
+  }));
   const latestReportHref = latestPublishedSession.slug ? `/report/${latestPublishedSession.slug}` : null;
   const terminalSnapshotHref = `/terminal?sessionId=${encodeURIComponent(latestPublishedSession.sessionId)}`;
   const comparisonCards = buildPublishedComparisonCards(key, currentPublished);
+  const monitorTimeline = await listPublicMonitorTimelineByAsset(key, 8)
+    .then((rows) => rows.map(toMonitorTimelineItem))
+    .catch(() => []);
   const pageUrl = `${baseUrl()}${localePrefix(locale)}/asset/${key}`;
 
   const structuredData: Record<string, unknown>[] = [
@@ -480,6 +557,113 @@ export async function getAssetHubProjection(key: string, locale: string): Promis
     latestReportHref,
     terminalSnapshotHref,
     comparisonCards,
+    monitorTimeline,
+    archiveDates,
+    structuredData,
+  };
+}
+
+export async function getAssetArchiveProjection(key: string, date: string, locale: string): Promise<AssetArchiveProjection> {
+  const label = decodeURIComponent(key).replace(/-/g, ' ');
+  const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
+
+  if (!hasDb()) {
+    return {
+      status: 'missing_db',
+      label,
+      capitalizedLabel,
+      date,
+    };
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return {
+      status: 'not_found',
+      label,
+      capitalizedLabel,
+      date,
+    };
+  }
+
+  let metric: Awaited<ReturnType<typeof getAssetDailyMetric>>;
+  try {
+    metric = await getAssetDailyMetric(key, date);
+  } catch {
+    return {
+      status: 'unavailable',
+      label,
+      capitalizedLabel,
+      date,
+    };
+  }
+
+  const aggregation = asAssetAggregation(metric?.summary);
+  if (!aggregation) {
+    return {
+      status: 'not_found',
+      label,
+      capitalizedLabel,
+      date,
+    };
+  }
+
+  const localizedPrefix = localePrefix(locale);
+  const pageUrl = `${baseUrl()}${localizedPrefix}/asset/${key}/archive/${date}`;
+  const latestReportHref = aggregation.reports[0]?.slug ? `/report/${aggregation.reports[0].slug}` : null;
+  const structuredData: Record<string, unknown>[] = [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'CollectionPage',
+      name: `${capitalizedLabel} archive snapshot for ${date}`,
+      description: `Historical TrendAnalysis.ai archive snapshot for ${capitalizedLabel} on ${date}.`,
+      url: pageUrl,
+      inLanguage: locale,
+      isPartOf: {
+        '@type': 'CollectionPage',
+        name: `${capitalizedLabel} Asset Hub`,
+        url: `${baseUrl()}${localizedPrefix}/asset/${key}`,
+      },
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        {
+          '@type': 'ListItem',
+          position: 1,
+          name: 'Home',
+          item: `${baseUrl()}${localizedPrefix}`,
+        },
+        {
+          '@type': 'ListItem',
+          position: 2,
+          name: 'Asset Hubs',
+          item: `${baseUrl()}${localizedPrefix}/asset`,
+        },
+        {
+          '@type': 'ListItem',
+          position: 3,
+          name: capitalizedLabel,
+          item: `${baseUrl()}${localizedPrefix}/asset/${key}`,
+        },
+        {
+          '@type': 'ListItem',
+          position: 4,
+          name: date,
+          item: pageUrl,
+        },
+      ],
+    },
+  ];
+
+  return {
+    status: 'ok',
+    label,
+    capitalizedLabel,
+    date,
+    pageUrl,
+    aggregation,
+    latestReportHref,
     structuredData,
   };
 }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { createChatCompletion, getAIConfig } from '@/lib/ai';
+import { getProviderUsage } from '@/lib/budget-guard';
 import { hasDb, getSession as dbGetSession, insertEvent, insertEventBatch } from '@/lib/db';
 import { createLogger } from '@/lib/log';
 import { selectStageModel } from '@/lib/modelRouting';
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
   const reqId = crypto.randomUUID();
   const log = createLogger({ reqId, route: '/api/chat' });
   const startedAt = Date.now();
-  const rateLimit = checkRouteRateLimit(request, 'chat');
+  const rateLimit = await checkRouteRateLimit(request, 'chat');
   if (!rateLimit.ok) {
     return rateLimit.response;
   }
@@ -73,6 +74,14 @@ export async function POST(request: Request) {
   if (!cfg) {
     return NextResponse.json(
       { error: 'AI not configured (missing key).' },
+      { status: 503, headers: rateLimit.headers },
+    );
+  }
+
+  const usageGuard = await getProviderUsage('openrouter');
+  if (!usageGuard.ok) {
+    return NextResponse.json(
+      { error: 'OpenRouter daily call limit exceeded', provider: 'openrouter', calls: usageGuard.calls, limit: usageGuard.limit },
       { status: 503, headers: rateLimit.headers },
     );
   }
@@ -170,6 +179,7 @@ export async function POST(request: Request) {
 
   const content = result.content.trim() || '';
   const usage = result.usage;
+  const model = result.model || cfg.model;
 
   // Persist to trace for demo/debug. (Best-effort)
   await insertEventBatch([
@@ -182,7 +192,7 @@ export async function POST(request: Request) {
       sessionId: body.sessionId,
       type: 'ai.usage',
       payload: {
-        model: cfg.model,
+        model,
         tag: 'chat',
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
@@ -199,7 +209,7 @@ export async function POST(request: Request) {
   log.info('chat.ok', {
     sessionId: body.sessionId,
     ms: Date.now() - startedAt,
-    model: cfg.model,
+    model,
     total_tokens: usage?.total_tokens ?? 0,
   });
 
@@ -208,7 +218,7 @@ export async function POST(request: Request) {
       ok: Boolean(content),
       content,
       usage: {
-        model: cfg.model,
+        model,
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
         total_tokens: usage?.total_tokens ?? 0,

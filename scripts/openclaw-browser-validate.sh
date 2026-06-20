@@ -68,7 +68,7 @@ if [[ -z "$base_url" ]]; then
 fi
 
 base_url="${base_url%/}"
-sample_query="${OPENCLAW_SAMPLE_QUERY:-Why is BTC moving today?}"
+sample_query="${OPENCLAW_SAMPLE_QUERY:-What changed in NVDA earnings expectations today?}"
 report_slug="${OPENCLAW_REPORT_SLUG:-}"
 
 if [[ -z "$report_slug" && "${OPENCLAW_RUN_PUBLISH:-0}" == "1" ]]; then

@@ -74,35 +74,6 @@ const features = [
   },
 ];
 
-function ExampleOutput() {
-  return (
-    <div className="space-y-3">
-      <div className="rounded-xl border border-white/8 bg-black/20 p-4">
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/48">
-          <span>q=bitcoin</span>
-          <span>vertical=news</span>
-          <span>recency=d</span>
-          <span>count=3</span>
-        </div>
-        <div className="mt-4 space-y-3">
-          {[
-            ['Reuters', 'Bitcoin steadies as ETF inflows offset profit taking'],
-            ['Bloomberg', 'Crypto rally broadens while traders monitor Fed tone'],
-            ['CoinDesk', 'Miners rotate holdings as BTC volatility cools'],
-          ].map(([source, title]) => (
-            <div key={title} className="rounded-lg border border-white/6 bg-white/[0.03] p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/40">
-                {source}
-              </div>
-              <div className="mt-1 text-sm text-white/80">{title}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default async function SerpExplorerPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
@@ -155,8 +126,7 @@ export default async function SerpExplorerPage({ params }: { params: Promise<{ l
         'Inspect how web versus news search changes the evidence pool for the same market query.',
         'Show prospects and partners that the search layer itself is a reusable product surface.',
       ]}
-      searchPlaceholder="e.g. bitcoin news, NVDA earnings, Fed rate outlook..."
-      exampleOutput={<ExampleOutput />}
+      searchPlaceholder="e.g. NVDA earnings, Fed rate outlook, oil market..."
       statsLine="Exposes the same search-stage capability that seeds TrendAnalysis.ai evidence collection."
       apiSurface={[
         {
@@ -164,7 +134,7 @@ export default async function SerpExplorerPage({ params }: { params: Promise<{ l
           path: '/api/serp',
           description:
             'Run a read-only search query against the backend SERP layer. Supports `q`, `vertical`, `format`, and `recency`.',
-          example: 'GET /api/serp?q=bitcoin&vertical=news&recency=d&format=light',
+          example: 'GET /api/serp?q=NVDA%20earnings&vertical=news&recency=d&format=light',
         },
       ]}
       relatedTools={relatedTools}

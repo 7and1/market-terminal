@@ -7,17 +7,21 @@ cd "$repo_root"
 
 resolve_env_file() {
   if [[ -n "${OPENCLAW_RUNTIME_ENV_FILE:-}" ]]; then
+    if [[ ! -f "${OPENCLAW_RUNTIME_ENV_FILE}" ]]; then
+      echo "openclaw-preview: OPENCLAW_RUNTIME_ENV_FILE does not exist: ${OPENCLAW_RUNTIME_ENV_FILE}" >&2
+      exit 1
+    fi
     printf '%s\n' "${OPENCLAW_RUNTIME_ENV_FILE}"
     return 0
   fi
 
+  local candidates=(".env.preview-runtime.fixed" ".env.preview-runtime" ".env.production")
+  if [[ "${OPENCLAW_ALLOW_LOCAL_ENV:-0}" == "1" ]]; then
+    candidates+=(".env.local")
+  fi
+
   local candidate
-  for candidate in \
-    ".env.preview-runtime.fixed" \
-    ".env.preview-runtime" \
-    ".env.local" \
-    ".env.production"
-  do
+  for candidate in "${candidates[@]}"; do
     if [[ -f "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
@@ -27,12 +31,52 @@ resolve_env_file() {
   return 1
 }
 
+load_env_file() {
+  local env_file="$1"
+  local parsed
+  parsed="$(mktemp)"
+
+  python3 - "$env_file" >"$parsed" <<'PY'
+import re
+import shlex
+import sys
+
+env_file = sys.argv[1]
+key_pattern = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+with open(env_file, 'r', encoding='utf-8') as fh:
+    for idx, raw_line in enumerate(fh, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[7:].lstrip()
+        try:
+            parts = shlex.split(line, posix=True)
+        except ValueError:
+            print(f'openclaw-preview: skipping invalid env line {idx} in {env_file}', file=sys.stderr)
+            continue
+        if len(parts) != 1 or '=' not in parts[0]:
+            print(f'openclaw-preview: skipping invalid env line {idx} in {env_file}', file=sys.stderr)
+            continue
+        key, value = parts[0].split('=', 1)
+        if not key_pattern.match(key):
+            print(f'openclaw-preview: skipping invalid env key {key!r} in {env_file}', file=sys.stderr)
+            continue
+        sys.stdout.buffer.write(f'{key}={value}'.encode('utf-8') + b'\0')
+PY
+
+  local assignment
+  while IFS= read -r -d '' assignment; do
+    export "$assignment"
+  done <"$parsed"
+
+  rm -f "$parsed"
+}
+
 if env_file="$(resolve_env_file)"; then
   echo "openclaw-preview: loading env from ${env_file}" >&2
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
+  load_env_file "$env_file"
 else
   echo "openclaw-preview: no preview env file found; using current process env only" >&2
 fi

@@ -17,16 +17,32 @@ async function main() {
   });
 
   try {
-    const { rowCount } = await pool.query(
-      `DELETE FROM market_signal.sessions
-       WHERE published IS NOT TRUE
-         AND status <> 'ready'
-         AND created_at < NOW() - INTERVAL '24 hours'`,
+    const { rowCount: deletedSessions } = await pool.query(
+      `DELETE FROM market_signal.sessions AS s
+       WHERE s.published IS NOT TRUE
+         AND (
+           (s.status = 'ready' AND s.created_at < NOW() - INTERVAL '30 days')
+           OR (
+             s.status <> 'ready'
+             AND s.created_at < NOW() - INTERVAL '24 hours'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM market_signal.monitor_runs
+               WHERE monitor_runs.session_id = s.session_id
+                 AND monitor_runs.created_at >= NOW() - INTERVAL '7 days'
+             )
+           )
+         )`,
+    );
+    const { rowCount: deletedRateLimitCounters } = await pool.query(
+      `DELETE FROM market_signal.rate_limit_counters
+       WHERE reset_at < NOW()`,
     );
     console.log(
       JSON.stringify({
         ok: true,
-        deleted: rowCount ?? 0,
+        deleted: deletedSessions ?? 0,
+        deletedRateLimitCounters: deletedRateLimitCounters ?? 0,
         ranAt: new Date().toISOString(),
       }),
     );

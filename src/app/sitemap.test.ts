@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listPublished = vi.fn();
 const listCurrentPublished = vi.fn();
+const listAssetArchiveDates = vi.fn();
 const filterPublishableSessions = vi.fn();
 const summarizeSessionQuality = vi.fn();
 const isSeededAssetKey = vi.fn();
 const isSeededCanonicalHeadKey = vi.fn();
 
 vi.mock('@/lib/db', () => ({
+  listAssetArchiveDates,
   listPublished,
   listCurrentPublished,
 }));
@@ -46,6 +48,18 @@ describe('sitemap', () => {
         slug: 'obscure-asset-move-2026-03-27-efgh',
         assetKey: 'obscure-asset',
         _creationTime: Date.UTC(2026, 2, 27),
+      },
+    ]);
+    listAssetArchiveDates.mockResolvedValue([
+      {
+        assetKey: 'bitcoin',
+        metricDate: '2026-03-26',
+        updatedAt: '2026-03-26T12:00:00.000Z',
+      },
+      {
+        assetKey: 'obscure-asset',
+        metricDate: '2026-03-27',
+        updatedAt: '2026-03-27T12:00:00.000Z',
       },
     ]);
     listCurrentPublished.mockResolvedValue([
@@ -87,10 +101,12 @@ describe('sitemap', () => {
     expect(urls).toContain('https://trendanalysis.ai');
     expect(urls).toContain('https://trendanalysis.ai/report/bitcoin-price-move-2026-03-26-abcd');
     expect(urls).toContain('https://trendanalysis.ai/asset/bitcoin');
+    expect(urls).toContain('https://trendanalysis.ai/asset/bitcoin/archive/2026-03-26');
     expect(urls).not.toContain('https://trendanalysis.ai/how-it-works');
     expect(urls).not.toContain('https://trendanalysis.ai/tools');
     expect(urls).not.toContain('https://trendanalysis.ai/report/obscure-asset-move-2026-03-27-efgh');
     expect(urls).not.toContain('https://trendanalysis.ai/asset/obscure-asset');
+    expect(urls).not.toContain('https://trendanalysis.ai/asset/obscure-asset/archive/2026-03-27');
     expect(trendingEntry?.alternates?.languages?.zh).toBe('https://trendanalysis.ai/zh/trending');
     expect(trendingEntry?.alternates?.languages?.['x-default']).toBe('https://trendanalysis.ai/trending');
   });
