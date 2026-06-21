@@ -1,21 +1,13 @@
 'use client';
 
-import { useCallback } from 'react';
-import { Download, Maximize2, Network } from 'lucide-react';
+import { Maximize2, Network } from 'lucide-react';
 
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LoadRipple } from '@/components/ui/load-ripple';
-import { exportGraphPng, exportEvidenceCsv, exportEvidenceJson } from '@/lib/export';
 import { EvidenceGraph } from '@/components/terminal/EvidenceGraph';
 import { EvidenceFlow } from '@/components/terminal/EvidenceFlow';
 import { EvidenceMindMap } from '@/components/terminal/EvidenceMindMap';

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 import type { PipelineStep } from '@/components/terminal/PipelineTimeline';
-import { buildSeries, isUuid, now, mergeTraceResponse } from '@/components/terminal/helpers';
+import { isUuid, now, mergeTraceResponse } from '@/components/terminal/helpers';
 import { buildReplayTimeline, type SessionsListResponse } from '@/components/terminal/terminal-state';
 import type { TerminalSharedState } from '@/components/terminal/hooks/useTerminalSharedState';
 import type { SessionSnapshotArtifacts, SessionSnapshotMeta } from '@/components/terminal/model';
@@ -149,7 +149,6 @@ export function useTerminalReplay({
         Boolean(savedPrice?.series?.length) &&
         Boolean(savedPrice?.timestamps?.length) &&
         savedPrice?.series?.length === savedPrice?.timestamps?.length;
-      const fallbackSeries = buildSeries(startedAt);
 
       store.setSession({
         id: data.session.id,
@@ -164,8 +163,8 @@ export function useTerminalReplay({
         nodes: Array.isArray(artifacts.nodes) ? artifacts.nodes : [],
         edges: Array.isArray(artifacts.edges) ? artifacts.edges : [],
         evidence: Array.isArray(artifacts.evidence) ? artifacts.evidence : [],
-        series: hasSavedSeries ? savedPrice!.series : fallbackSeries.y,
-        seriesTs: hasSavedSeries ? savedPrice!.timestamps : fallbackSeries.t,
+        series: hasSavedSeries ? savedPrice!.series : [],
+        seriesTs: hasSavedSeries ? savedPrice!.timestamps : [],
         videosSnapshot: savedVideos,
         priceSnapshot: savedPrice,
         snapshotMode: true,

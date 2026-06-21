@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { SiteHeader } from '@/components/layout/site-header';
 import { PageBackground } from '@/components/layout/page-background';
+import { DemandDashboard } from '@/components/dashboard/DemandDashboard';
 import { MonitorDashboard } from '@/components/dashboard/MonitorDashboard';
 import {
   asRecord,
@@ -255,7 +256,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export function SessionDashboard() {
   const t = useTranslations('dashboard');
   const nav = useTranslations('nav');
-  const [dashboardView, setDashboardView] = useState<'sessions' | 'monitors'>('sessions');
+  const [dashboardView, setDashboardView] = useState<'sessions' | 'monitors' | 'demand'>('sessions');
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -531,10 +532,11 @@ export function SessionDashboard() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Tabs value={dashboardView} onValueChange={(value) => setDashboardView(value as 'sessions' | 'monitors')}>
+            <Tabs value={dashboardView} onValueChange={(value) => setDashboardView(value as 'sessions' | 'monitors' | 'demand')}>
               <TabsList>
                 <TabsTrigger value="sessions">{t('sessions')}</TabsTrigger>
                 <TabsTrigger value="monitors">{t('monitors')}</TabsTrigger>
+                <TabsTrigger value="demand">Demand</TabsTrigger>
               </TabsList>
             </Tabs>
             <Link href="/how-it-works">
@@ -558,6 +560,8 @@ export function SessionDashboard() {
       <main className="mx-auto max-w-[1520px] px-4 pb-14">
         {dashboardView === 'monitors' ? (
           <MonitorDashboard />
+        ) : dashboardView === 'demand' ? (
+          <DemandDashboard />
         ) : (
         <div className="grid gap-5 lg:grid-cols-12">
           {/* ── Left: Session List ──────────────────────────────────── */}

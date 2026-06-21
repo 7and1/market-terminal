@@ -74,35 +74,6 @@ const features = [
   },
 ];
 
-function ExampleOutput() {
-  return (
-    <div className="grid gap-4 sm:grid-cols-[1.2fr_0.8fr]">
-      <div className="rounded-xl border border-white/8 bg-black/20 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.12em] text-white/40">BTC Snapshot</div>
-            <div className="mt-1 text-2xl font-semibold text-white/90">$68,422</div>
-          </div>
-          <div className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
-            +1.8%
-          </div>
-        </div>
-        <div className="mt-4 h-20 rounded-lg border border-white/6 bg-gradient-to-r from-[rgba(0,102,255,0.12)] via-[rgba(120,196,255,0.18)] to-[rgba(0,102,255,0.04)]" />
-      </div>
-      <div className="rounded-xl border border-white/8 bg-black/20 p-4">
-        <div className="text-[11px] uppercase tracking-[0.12em] text-white/40">Response fields</div>
-        <div className="mt-3 space-y-2 text-sm text-white/70">
-          <div>provider: <span className="text-white/46">coingecko</span></div>
-          <div>symbol: <span className="text-white/46">BTC</span></div>
-          <div>series: <span className="text-white/46">24h array</span></div>
-          <div>timestamps: <span className="text-white/46">24h array</span></div>
-          <div>last: <span className="text-white/46">68422</span></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default async function PriceSnapshotPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
@@ -150,7 +121,6 @@ export default async function PriceSnapshotPage({ params }: { params: Promise<{ 
         'Show that TrendAnalysis.ai includes small composable data products, not only one terminal experience.',
       ]}
       searchPlaceholder="e.g. BTC, ETH, SOL, gold..."
-      exampleOutput={<ExampleOutput />}
       statsLine="Optimized for fast, read-only price checks on a short cache window."
       apiSurface={[
         {

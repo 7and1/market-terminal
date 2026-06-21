@@ -62,13 +62,14 @@ export function selectStageModel({
   stage,
   mode,
   requestedModel,
+  hasClientApiKey,
 }: {
   stage: ModelStage;
   mode: RunMode;
   requestedModel?: string;
+  hasClientApiKey?: boolean;
 }): string | undefined {
-  // Caller-supplied model wins. Useful for one-off experiments.
-  const explicit = firstNonEmpty(requestedModel);
+  const explicit = env.ai.allowClientApiKeys && hasClientApiKey ? firstNonEmpty(requestedModel) : undefined;
   if (explicit) return explicit;
 
   const profile = env.ai.openrouter as ModelProfile;

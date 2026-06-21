@@ -1,6 +1,6 @@
-import { hasBrightData, hasDb } from '@/lib/env';
+import { env, hasBrightData, hasDb } from '@/lib/env';
 import { type SerpResult } from '@/lib/brightdata';
-import { createSession, insertEvent, updateStatus, updateStep as dbUpdateStep } from '@/lib/db';
+import { createSession, insertEvent, materializeSessionEvidence, updateStatus, updateStep as dbUpdateStep } from '@/lib/db';
 import type { EvidenceItemsWithScrapeMeta, PerfMark, PipelineStep, RunRequest } from '@/lib/run-pipeline/contracts';
 import { selectStageModel } from '@/lib/modelRouting';
 import { buildArtifacts } from '@/lib/run-pipeline/stages/artifacts';
@@ -50,6 +50,10 @@ export type RunExecutionResult = {
   error?: string;
 };
 
+function sleepMs(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 export async function executeRun({
   body,
   signal,
@@ -69,7 +73,8 @@ export async function executeRun({
 }): Promise<RunExecutionResult> {
   const provider = 'openrouter' as const;
   const serpFormat = body.serpFormat || 'light';
-  const dbReady = hasDb();
+  let dbReady = hasDb();
+  const assetKey = typeof initialMeta.assetKey === 'string' && initialMeta.assetKey ? initialMeta.assetKey : null;
   const baseMeta = {
     mode: body.mode,
     provider,
@@ -88,11 +93,29 @@ export async function executeRun({
   });
 
   if (dbReady) {
-    try {
-      await createSession(sessionId, body.topic, 'running', 'plan', 0.05, baseMeta);
-      log.info('run.db.session_inserted', { sessionId });
-    } catch {
-      log.warn('run.db.session_insert_failed', { sessionId });
+    let inserted = false;
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await createSession(sessionId, body.topic, 'running', 'plan', 0.05, baseMeta, body.reportKey || null);
+        log.info('run.db.session_inserted', { sessionId, attempt });
+        inserted = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          await sleepMs(200 * attempt);
+        }
+      }
+    }
+
+    if (!inserted) {
+      dbReady = false;
+      log.warn('run.db.session_insert_failed', {
+        sessionId,
+        error: safeErrorText(lastError),
+        persistenceDisabled: true,
+      });
     }
   }
 
@@ -255,6 +278,9 @@ export async function executeRun({
   await emit('session', {
     sessionId,
     topic: body.topic,
+    locale: body.locale || null,
+    reportKey: body.reportKey || null,
+    runReason: body.runReason,
     startedAt,
     mode: body.mode,
     provider,
@@ -276,6 +302,7 @@ export async function executeRun({
       stage: 'plan',
       mode: body.mode,
       requestedModel: body.model,
+      hasClientApiKey: Boolean(body.apiKey),
     });
     await diag('plan.model', { model: planModel || 'default' });
 
@@ -312,6 +339,7 @@ export async function executeRun({
           mode: body.mode,
           serpResponseFormat,
           signal,
+          locale: body.locale || null,
           onDiag: (stage, details = {}) => {
             void diag(stage, details);
           },
@@ -335,13 +363,15 @@ export async function executeRun({
     } else {
       await emit('warn', { message: 'BRIGHTDATA_API_TOKEN is not set. Search/scrape steps will be limited.' });
       log.warn('run.search.no_brightdata', { sessionId, queries: queries.length });
+      throw new Error('Bright Data is not configured; live evidence collection is unavailable.');
     }
 
     if (!serp.length) {
       await emit('warn', { message: 'No SERP results collected. Check Bright Data zones/tokens, then re-run.' });
+      throw new Error('No SERP results collected; refusing to render an analysis without live evidence.');
     }
 
-    const picked = pickSerpDiverse(serp, body.mode === 'deep' ? 14 : 12);
+    const picked = pickSerpDiverse(serp, body.mode === 'deep' ? 14 : 12, body.topic);
     const pickedDomains = Array.from(new Set(picked.map((r) => domainFromUrl(r.url)))).slice(0, 14);
     log.info('run.search.picked', { sessionId, picked: picked.length, domains: pickedDomains });
     await emit('search', { queries, results: picked });
@@ -408,6 +438,7 @@ export async function executeRun({
         stage: 'summaries',
         mode: body.mode,
         requestedModel: body.model,
+        hasClientApiKey: Boolean(body.apiKey),
       });
       evidenceWithSummaries = await timed(
         'api',
@@ -435,6 +466,22 @@ export async function executeRun({
 
     const evidenceSources = Array.from(new Set(evidenceWithSummaries.map((e) => e.source))).slice(0, 14);
     log.info('run.evidence', { sessionId, items: evidenceWithSummaries.length, mode: body.mode, sources: evidenceSources });
+    if (evidenceWithSummaries.length < env.pipeline.minEvidenceForReady) {
+      throw new Error(`Only ${evidenceWithSummaries.length} evidence item(s) collected; minimum ready threshold is ${env.pipeline.minEvidenceForReady}.`);
+    }
+    if (dbReady) {
+      await materializeSessionEvidence({
+        sessionId,
+        assetKey,
+        evidence: evidenceWithSummaries,
+      }).catch((error) => {
+        log.warn('run.db.evidence_materialize_failed', {
+          sessionId,
+          error: safeErrorText(error),
+        });
+        void emit('warn', { message: 'Evidence persistence failed; this run remains viewable from its session snapshot only.' });
+      });
+    }
     await emit('evidence', { items: evidenceWithSummaries });
     await emitStep('extract', 0.55);
 
@@ -444,6 +491,7 @@ export async function executeRun({
       stage: 'artifacts',
       mode: body.mode,
       requestedModel: body.model,
+      hasClientApiKey: Boolean(body.apiKey),
     });
 
     const artifacts = await timed(
@@ -537,6 +585,7 @@ export async function executeRun({
 
     const readyMeta = {
       ...baseMeta,
+      persisted: dbReady,
       plan,
       selectedUrls: picked.slice(0, 10).map((r) => r.url),
       artifacts: {

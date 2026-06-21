@@ -36,11 +36,41 @@ export function maskSecret(secret: string | null | undefined) {
 export function redact(text: string) {
   // Best-effort redaction for common secret shapes. Keep simple; do not over-redact normal text.
   return text
+    .replace(/("(?:[^"]*(?:authorization|api[_-]?key|token|secret|password|cookie)[^"]*)"\s*:\s*)"[^"]*"/gi, '$1"***"')
+    .replace(/([?&](?:api[_-]?key|key|token|secret|password)=)[^&\s"]+/gi, '$1***')
     .replace(/Bearer\s+[A-Za-z0-9._-]{10,}/gi, 'Bearer ***')
     .replace(/sk-[A-Za-z0-9_-]{10,}/g, 'sk-***');
 }
 
 export type LogContext = Record<string, unknown>;
+
+function isSensitiveField(key: string) {
+  const normalized = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+  return /(^|[-_.])(authorization|api[-_]?key|token|secret|password|cookie)([-_.]|$)/.test(normalized);
+}
+
+function sanitizeLogValue(value: unknown, key = '', seen = new WeakSet<object>()): unknown {
+  if (key && isSensitiveField(key)) return '***';
+  if (typeof value === 'string') return redact(value);
+  if (!value || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeLogValue(entry, '', seen));
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+      entryKey,
+      sanitizeLogValue(entryValue, entryKey, seen),
+    ]),
+  );
+}
+
+function sanitizeLogContext(context: LogContext): LogContext {
+  return sanitizeLogValue(context) as LogContext;
+}
 
 export function createLogger(base: LogContext = {}) {
   const log =
@@ -51,10 +81,10 @@ export function createLogger(base: LogContext = {}) {
         ts: new Date().toISOString(),
         level,
         msg: redact(message),
-        ...base,
-        ...fields,
+        ...sanitizeLogContext(base),
+        ...sanitizeLogContext(fields),
       };
-      console[level === 'debug' ? 'log' : level](safeJson(payload));
+      console[level === 'debug' ? 'log' : level](redact(safeJson(payload)));
     };
 
   return {

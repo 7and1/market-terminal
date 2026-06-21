@@ -1,16 +1,18 @@
 'use client';
 
-import { Link } from '@/i18n/navigation';
 import {
   Network,
   RefreshCw,
   Share,
   TrendingUp,
+  TriangleAlert,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 
+import { Link } from '@/i18n/navigation';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import type { PipelineStep } from '@/components/terminal/PipelineTimeline';
 
@@ -46,7 +48,13 @@ export function TerminalHeader({
   running: boolean;
   session: { id: string; topic: string; step: PipelineStep } | null;
   publishing: boolean;
-  publishedReport: { fullUrl: string; relativeUrl: string; alreadyPublished: boolean } | null;
+  publishedReport: {
+    slug: string;
+    locale: string;
+    fullUrl: string;
+    relativeUrl: string;
+    alreadyPublished: boolean;
+  } | null;
   snapshotMode: boolean;
   terminalMode: 'draft' | 'live' | 'replay';
   warnings: string[];
@@ -166,20 +174,42 @@ export function TerminalHeader({
                   <span>
                     {publishedReport.alreadyPublished ? t('reportReadyExisting') : t('reportReady')}
                   </span>
-                  <a
-                    href={publishedReport.relativeUrl}
+                  <Link
+                    href={`/report/${publishedReport.slug}`}
+                    locale={publishedReport.locale}
                     className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-white/80 transition hover:bg-white/[0.08]"
                   >
                     {t('openReport')}
-                  </a>
+                  </Link>
                   <span className="text-white/45">{publishedReport.fullUrl}</span>
                 </div>
               ) : null}
               {warnings.length ? (
-                <div className="mt-2 text-xs text-[rgba(255,190,125,0.9)]">
-                  {warnings.length === 1
-                    ? t('warnings', { count: warnings.length })
-                    : t('warningsPlural', { count: warnings.length })}
+                <div className="mt-3 rounded-2xl border border-[rgba(255,138,76,0.24)] bg-[rgba(255,138,76,0.08)] px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-[rgba(255,214,184,0.94)]">
+                    <Badge variant="orange" className="gap-1 uppercase tracking-[0.14em]">
+                      <TriangleAlert className="h-3.5 w-3.5" />
+                      {t('degraded')}
+                    </Badge>
+                    <span className="font-semibold">
+                      {warnings.length === 1
+                        ? t('warnings', { count: warnings.length })
+                        : t('warningsPlural', { count: warnings.length })}
+                    </span>
+                  </div>
+                  <ul className="mt-2 space-y-1 text-xs leading-relaxed text-[rgba(255,225,204,0.82)]">
+                    {warnings.slice(0, 4).map((warning, idx) => (
+                      <li key={`${idx}-${warning.slice(0, 24)}`} className="flex gap-2">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[rgba(255,190,125,0.9)]" />
+                        <span>{warning}</span>
+                      </li>
+                    ))}
+                    {warnings.length > 4 ? (
+                      <li className="pl-3.5 text-[rgba(255,225,204,0.62)]">
+                        {t('warningsMore', { count: warnings.length - 4 })}
+                      </li>
+                    ) : null}
+                  </ul>
                 </div>
               ) : null}
             </div>

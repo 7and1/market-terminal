@@ -70,55 +70,6 @@ const features = [
   },
 ];
 
-function ExampleOutput() {
-  return (
-    <div className="space-y-4">
-      {/* Simplified graph representation */}
-      <div className="flex items-center justify-center gap-8">
-        <div className="flex flex-col items-center gap-1">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-[rgba(0,102,255,0.4)] bg-[rgba(0,102,255,0.12)] text-[10px] font-bold text-[rgba(182,220,255,0.95)]">
-            BTC
-          </div>
-          <span className="text-[9px] text-white/40">asset</span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <div className="h-px w-16 bg-gradient-to-r from-[rgba(0,102,255,0.5)] to-[rgba(120,196,255,0.5)]" />
-          <span className="text-[9px] text-white/35">co_moves 0.82</span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full border border-[rgba(120,196,255,0.4)] bg-[rgba(120,196,255,0.1)] text-[10px] font-bold text-[rgba(182,220,255,0.95)]">
-            ETH
-          </div>
-          <span className="text-[9px] text-white/40">asset</span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-center gap-4">
-        <div className="h-8 w-px bg-white/10" />
-      </div>
-
-      <div className="flex items-center justify-center gap-6">
-        <div className="flex flex-col items-center gap-1">
-          <div className="flex h-10 w-24 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 text-[10px] font-semibold text-amber-300">
-            Fed Meeting
-          </div>
-          <span className="text-[9px] text-white/40">event</span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <div className="h-px w-10 bg-white/20" />
-          <span className="text-[9px] text-white/35">mentions 0.91</span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <div className="flex h-10 w-24 items-center justify-center rounded-lg border border-green-500/30 bg-green-500/10 text-[10px] font-semibold text-green-300">
-            Reuters
-          </div>
-          <span className="text-[9px] text-white/40">source</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default async function EvidenceGraphPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
@@ -159,8 +110,7 @@ export default async function EvidenceGraphPage({ params }: { params: Promise<{ 
         'Turn raw evidence into a board-ready graph view for research, sales, or partner demos.',
         'Expose the graph-building layer as a product capability instead of hiding it inside the terminal UI.',
       ]}
-      searchPlaceholder="e.g. crypto market correlations, tech sector earnings..."
-      exampleOutput={<ExampleOutput />}
+      searchPlaceholder="e.g. tech sector earnings, AI infrastructure supply chain..."
       statsLine="Generates up to 24 nodes and 36 edges per analysis with 4 relationship types."
       apiSurface={[
         {
@@ -168,7 +118,7 @@ export default async function EvidenceGraphPage({ params }: { params: Promise<{ 
           path: '/api/run',
           description:
             'Runs the full graph-producing workflow and persists the artifacts needed for graph, mind map, flow, and timeline views.',
-          example: 'POST /api/run { "topic": "crypto market correlations", "mode": "deep" }',
+          example: 'POST /api/run { "topic": "AI infrastructure supply chain", "mode": "deep" }',
         },
         {
           method: 'GET',

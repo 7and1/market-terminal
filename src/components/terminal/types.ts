@@ -20,5 +20,6 @@ export type GraphEdge = {
   type: EdgeType;
   confidence: number;
   evidenceIds: string[];
+  origin?: 'ai' | 'heuristic';
   rationale?: string;
 };

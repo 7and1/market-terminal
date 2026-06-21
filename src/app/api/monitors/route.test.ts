@@ -15,15 +15,40 @@ vi.mock('@/lib/db', () => ({
 describe('/api/monitors', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    process.env.OPERATOR_TOKEN = 'operator-secret';
     hasDb.mockReturnValue(true);
     toPublicMonitor.mockImplementation((monitor) => monitor ? { ...monitor, notifyWebhookUrl: null, hasNotifyWebhook: Boolean(monitor.notifyWebhookUrl) } : null);
+  });
+
+  it('returns 403 without operator auth', async () => {
+    const { GET } = await import('@/app/api/monitors/route');
+    const response = await GET(new Request('http://localhost/api/monitors'));
+
+    expect(response.status).toBe(403);
+  });
+
+  it('returns 403 instead of throwing on malformed operator cookie values', async () => {
+    const { GET } = await import('@/app/api/monitors/route');
+    const response = await GET(
+      new Request('http://localhost/api/monitors', {
+        headers: {
+          cookie: 'mt_operator_token=%E0%A4%A',
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
   });
 
   it('lists monitors', async () => {
     listMonitors.mockResolvedValue([{ id: 'm1', name: 'BTC Watch', notifyWebhookUrl: 'https://hooks.example/secret' }]);
 
     const { GET } = await import('@/app/api/monitors/route');
-    const response = await GET();
+    const response = await GET(
+      new Request('http://localhost/api/monitors', {
+        headers: { 'x-operator-token': 'operator-secret' },
+      }),
+    );
     const json = await response.json();
 
     expect(response.status).toBe(200);
@@ -38,7 +63,7 @@ describe('/api/monitors', () => {
     const response = await POST(
       new Request('http://localhost/api/monitors', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-operator-token': 'operator-secret' },
         body: JSON.stringify({
           name: 'BTC Watch',
           topic: 'Bitcoin macro drivers',

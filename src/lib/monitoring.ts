@@ -9,6 +9,7 @@ import {
   getLatestReadyMonitorRun,
   getMonitor,
   getSession,
+  listConfirmedSubscribersByAsset,
   markMonitorAlertSent,
   markMonitorRunRunning,
   patchMeta,
@@ -18,9 +19,13 @@ import {
   type MonitorRow,
   type MonitorRunRow,
 } from '@/lib/db';
+import { isSubscriptionEmailConfigured, sendMonitorAlertEmail } from '@/lib/email';
 import { createLogger } from '@/lib/log';
 import { selectStageModel } from '@/lib/modelRouting';
+import { promoteReadySessionToPublicHead } from '@/lib/publish-session';
 import { type SessionArtifacts, type SessionMeta, asSessionMeta, evidenceItems, getArtifacts } from '@/lib/session-data';
+import { getCanonicalHeadByKey } from '@/lib/topic-catalog';
+import { deriveTopicVisibility } from '@/lib/topic-resolution';
 import type { EvidenceItem } from '@/lib/types';
 import { type RunRequest } from '@/lib/run-pipeline/contracts';
 import { executeRun } from '@/lib/run-pipeline/execute';
@@ -167,7 +172,7 @@ function fallbackMonitorDiff(topic: string, currentMeta: SessionMeta, baselineMe
   };
 }
 
-async function buildMonitorDiffSummary({
+export async function buildSessionDiffSummary({
   topic,
   currentMeta,
   baselineMeta,
@@ -249,14 +254,120 @@ async function deliverMonitorWebhook({
   }
 }
 
+async function deliverSubscriberEmails({
+  assetKey,
+  reportUrl,
+  summary,
+}: {
+  assetKey: string | null | undefined;
+  reportUrl: string | null;
+  summary: MonitorDiffSummary;
+}): Promise<string | null> {
+  if (!assetKey || !summary.changeScore || summary.changeScore < 70 || !isSubscriptionEmailConfigured()) return null;
+
+  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
+  const subscribers = await listConfirmedSubscribersByAsset(assetKey).catch(() => []);
+  if (!subscribers.length) return null;
+
+  const fullReportUrl = reportUrl ? `${baseUrl}${reportUrl.startsWith('/') ? reportUrl : `/${reportUrl}`}` : null;
+  const failures: string[] = [];
+  await Promise.all(
+    subscribers.map(async (subscriber) => {
+      const unsubscribeUrl = `${baseUrl}/api/subscribe/unsubscribe?hash=${encodeURIComponent(subscriber.tokenHash)}`;
+      try {
+        await sendMonitorAlertEmail({
+          to: subscriber.email,
+          assetKey,
+          headline: summary.headline,
+          summary: summary.summary,
+          reportUrl: fullReportUrl,
+          unsubscribeUrl,
+        });
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+      }
+    }),
+  );
+
+  return failures.length ? `Subscriber email failed for ${failures.length} recipient(s): ${failures[0]}` : null;
+}
+
 function buildRunRequest(monitor: MonitorRow, monitorRunId: string): RunRequest {
   return {
     topic: monitor.topic,
+    runReason: 'direct',
     mode: monitor.mode,
     runIntent: 'monitor',
     monitorId: monitor.id,
     monitorRunId,
   };
+}
+
+function shouldAutoPromoteMonitorTopic(topic: string) {
+  const visibility = deriveTopicVisibility(topic);
+  const head = getCanonicalHeadByKey(visibility.subjectKey);
+  return visibility.visibility === 'public' && Boolean(head?.seedEnabled && head.priorityTier === 'v1');
+}
+
+async function maybeAutoPromoteMonitorSession({
+  claim,
+  currentSession,
+  sessionId,
+  logger,
+}: {
+  claim: ClaimedMonitorRun;
+  currentSession: NonNullable<Awaited<ReturnType<typeof getSession>>>;
+  sessionId: string;
+  logger: Logger;
+}): Promise<string | null> {
+  if (!shouldAutoPromoteMonitorTopic(claim.monitor.topic)) return null;
+
+  try {
+    const promotion = await promoteReadySessionToPublicHead(currentSession);
+    if (promotion.ok) {
+      let refreshDiff: MonitorDiffSummary | null = null;
+      if (promotion.previousHead?.currentSessionId && promotion.previousHead.currentSessionId !== currentSession.sessionId) {
+        const baselineSession = await getSession(promotion.previousHead.currentSessionId);
+        if (baselineSession) {
+          refreshDiff = await buildSessionDiffSummary({
+            topic: promotion.canonicalLabel,
+            currentMeta: asSessionMeta(currentSession.meta),
+            baselineMeta: asSessionMeta(baselineSession.meta),
+          });
+          await patchMeta(sessionId, {
+            refreshDiff: {
+              ...refreshDiff,
+              previousSessionId: baselineSession.sessionId,
+            },
+          });
+        }
+      }
+
+      logger.info('monitor.auto_promote.ok', {
+        monitorId: claim.monitor.id,
+        sessionId,
+        slug: promotion.slug,
+        reportKey: promotion.reportKey,
+        refreshSummary: refreshDiff?.summary || null,
+      });
+      return `/report/${promotion.slug}`;
+    }
+
+    logger.info('monitor.auto_promote.skipped', {
+      monitorId: claim.monitor.id,
+      sessionId,
+      code: promotion.code,
+      status: promotion.status,
+    });
+    return null;
+  } catch (error) {
+    logger.error('monitor.auto_promote.failed', {
+      monitorId: claim.monitor.id,
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 export async function executeClaimedMonitorRun({
@@ -297,7 +408,7 @@ export async function executeClaimedMonitorRun({
 
   const currentMeta = asSessionMeta(currentSession?.meta);
   const baselineMeta = baselineSession ? asSessionMeta(baselineSession.meta) : null;
-  const summary = await buildMonitorDiffSummary({
+  const summary = await buildSessionDiffSummary({
     topic: claim.monitor.topic,
     currentMeta,
     baselineMeta,
@@ -309,7 +420,15 @@ export async function executeClaimedMonitorRun({
   };
   const significant = baselineSessionId ? finalSummary.changeScore >= 70 : false;
 
-  const reportUrl = currentSession?.slug ? `/report/${currentSession.slug}` : null;
+  const promotedReportUrl = currentSession
+    ? await maybeAutoPromoteMonitorSession({
+        claim,
+        currentSession,
+        sessionId: result.sessionId,
+        logger,
+      })
+    : null;
+  const reportUrl = promotedReportUrl || (currentSession?.slug ? `/report/${currentSession.slug}` : null);
   const deliveryError = significant
     ? await deliverMonitorWebhook({
         monitor: claim.monitor,
@@ -318,8 +437,16 @@ export async function executeClaimedMonitorRun({
         summary: finalSummary,
       })
     : null;
-  if (deliveryError) {
-    finalSummary.deliveryError = deliveryError;
+  const subscriberDeliveryError = significant
+    ? await deliverSubscriberEmails({
+        assetKey: currentSession?.assetKey || deriveTopicVisibility(claim.monitor.topic).assetKey,
+        reportUrl,
+        summary: finalSummary,
+      })
+    : null;
+  const combinedDeliveryError = [deliveryError, subscriberDeliveryError].filter(Boolean).join('; ');
+  if (combinedDeliveryError) {
+    finalSummary.deliveryError = combinedDeliveryError;
   }
 
   await patchMeta(result.sessionId, {
@@ -332,7 +459,7 @@ export async function executeClaimedMonitorRun({
       sentimentShift: finalSummary.sentimentShift,
       newEvidence: finalSummary.newEvidence,
       newCatalysts: finalSummary.newCatalysts,
-      ...(deliveryError ? { deliveryError } : {}),
+      ...(combinedDeliveryError ? { deliveryError: combinedDeliveryError } : {}),
     },
   });
 
@@ -347,7 +474,7 @@ export async function executeClaimedMonitorRun({
       sentimentShift: finalSummary.sentimentShift,
       newEvidence: finalSummary.newEvidence,
       newCatalysts: finalSummary.newCatalysts,
-      ...(deliveryError ? { deliveryError } : {}),
+      ...(combinedDeliveryError ? { deliveryError: combinedDeliveryError } : {}),
     },
   });
   await updateMonitorCheckpoint({
@@ -355,7 +482,8 @@ export async function executeClaimedMonitorRun({
     lastReadySessionId: result.sessionId,
     lastChangeScore: finalSummary.changeScore,
   });
-  if (significant && !deliveryError) {
+
+  if (significant && !combinedDeliveryError) {
     await markMonitorAlertSent(claim.monitor.id);
   }
 }

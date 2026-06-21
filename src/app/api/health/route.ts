@@ -5,6 +5,7 @@ import { createChatCompletion, getAIConfig } from '@/lib/ai';
 import { brightDataSerpGoogle, probeBrightDataMarkdown } from '@/lib/brightdata';
 import { probeDb, probeDbSchema } from '@/lib/db';
 import { createLogger, maskSecret } from '@/lib/log';
+import { getOperatorAccessIssue } from '@/lib/operator-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,6 +14,14 @@ type ProbeStatus = {
   ok: boolean;
   [key: string]: unknown;
 };
+
+let probeCache:
+  | {
+      storedAt: number;
+      status: number;
+      payload: Record<string, unknown>;
+    }
+  | null = null;
 
 async function probeBrightData() {
   const token = env.brightdata.token;
@@ -31,7 +40,7 @@ async function probeBrightDataSerp() {
 
   const startedAt = Date.now();
   try {
-    const results = await brightDataSerpGoogle({ query: 'bitcoin news today', format: 'light_json_google' });
+    const results = await brightDataSerpGoogle({ query: 'market news today', format: 'light_json_google' });
     return {
       ok: results.length > 0,
       latencyMs: Date.now() - startedAt,
@@ -69,7 +78,8 @@ async function probeAI() {
   return {
     ok: Boolean(content),
     latencyMs,
-    model: cfg.model,
+    model: res.model,
+    requestedModel: cfg.model === res.model ? undefined : cfg.model,
     sample: content.slice(0, 40),
   };
 }
@@ -110,6 +120,20 @@ export async function GET(request: Request) {
     return NextResponse.json(base, { status: 200 });
   }
 
+  const operatorIssue = getOperatorAccessIssue(request);
+  if (operatorIssue) {
+    log.warn('health.probe.unauthorized', { status: operatorIssue.status, ms: Date.now() - startedAt });
+    return NextResponse.json(
+      { ok: false, error: operatorIssue.error },
+      { status: operatorIssue.status === 403 ? 401 : operatorIssue.status },
+    );
+  }
+
+  if (probeCache && Date.now() - probeCache.storedAt < 60_000) {
+    log.info('health.probe.cache_hit', { ms: Date.now() - startedAt });
+    return NextResponse.json({ ...probeCache.payload, cached: true }, { status: probeCache.status });
+  }
+
   const [bright, serp, ai, dbProbe, dbSchemaProbe] = await Promise.allSettled([
     probeBrightData(),
     probeBrightDataSerp(),
@@ -136,12 +160,14 @@ export async function GET(request: Request) {
 
   log.info('health.probe', { ok, probes, ms: Date.now() - startedAt });
 
-  return NextResponse.json(
-    {
-      ...base,
-      ok,
-      probes,
-    },
-    { status: ok ? 200 : 503 },
-  );
+  const payload = {
+    ...base,
+    ok,
+    probes,
+    cached: false,
+  };
+  const status = ok ? 200 : 503;
+  probeCache = { storedAt: Date.now(), status, payload };
+
+  return NextResponse.json(payload, { status });
 }

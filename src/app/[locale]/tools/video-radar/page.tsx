@@ -74,24 +74,6 @@ const features = [
   },
 ];
 
-function ExampleOutput() {
-  return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      {[
-        ['NVDA outlook: data center demand stays hot', 'Macro Tape'],
-        ['What moved bitcoin today?', 'Market Signal TV'],
-        ['Fed meeting recap and cross-asset effects', 'Rates Briefing'],
-      ].map(([title, channel]) => (
-        <div key={title} className="rounded-xl border border-white/8 bg-black/20 p-3">
-          <div className="aspect-video rounded-lg border border-white/6 bg-white/[0.04]" />
-          <div className="mt-3 text-sm font-semibold text-white/80">{title}</div>
-          <div className="mt-1 text-xs text-white/46">{channel}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default async function VideoRadarPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
@@ -138,8 +120,7 @@ export default async function VideoRadarPage({ params }: { params: Promise<{ loc
         'Turn the terminal media panel backend into a public SEO landing page with its own search intent.',
         'Give partners a simple example of how TrendAnalysis.ai can expose composable content discovery APIs.',
       ]}
-      searchPlaceholder="e.g. NVDA, bitcoin, Fed meeting, oil market..."
-      exampleOutput={<ExampleOutput />}
+      searchPlaceholder="e.g. NVDA, Fed meeting, oil market..."
       statsLine="Built on Bright Data search collection plus YouTube metadata enrichment."
       apiSurface={[
         {

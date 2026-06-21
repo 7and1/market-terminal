@@ -136,8 +136,8 @@ export const publicApiEntries: PublicApiEntry[] = [
     path: '/api/health',
     title: 'Health Probe',
     description:
-      'Returns service readiness and, with probe mode enabled, checks Bright Data, AI, and database connectivity.',
-    exampleQuery: '/api/health?probe=1',
+      'Returns public service readiness. Operator-authenticated probe mode can also check Bright Data, AI, and database connectivity.',
+    exampleQuery: '/api/health',
   },
   {
     method: 'GET',
@@ -145,7 +145,7 @@ export const publicApiEntries: PublicApiEntry[] = [
     title: 'SERP Search',
     description:
       'Runs web or news search through Bright Data and returns normalized search results for a topic query.',
-    exampleQuery: '/api/serp?q=bitcoin&vertical=news&recency=d',
+    exampleQuery: '/api/serp?q=NVDA%20earnings&vertical=news&recency=d',
   },
   {
     method: 'GET',

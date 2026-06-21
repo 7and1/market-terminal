@@ -1,40 +1,43 @@
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { Link } from '@/i18n/navigation';
-import { setRequestLocale } from 'next-intl/server';
+import { getTranslations, setRequestLocale } from 'next-intl/server';
 
-import { getBySlug, hasDb, listByAsset } from '@/lib/db';
-import { collectTopLabels, filterPublishableSessions, pickKeyEvidence, summarizeReportQuality } from '@/lib/report-quality';
-import { ReportHeader } from '@/components/report/ReportHeader';
-import { StaticMindMap } from '@/components/report/StaticMindMap';
-import { ClustersSummary } from '@/components/report/ClustersSummary';
-import { StaticTimeline } from '@/components/report/StaticTimeline';
-import { EvidenceList } from '@/components/report/EvidenceList';
-import { ShareBar } from '@/components/report/ShareBar';
+import { getPublishedReportBySlug, hasDb } from '@/lib/db';
+import { summarizeReportQuality } from '@/lib/report-quality';
+import {
+  ClustersSummary,
+  EvidenceList,
+  ReportHeader,
+  ShareBar,
+  StaticMindMap,
+  StaticTimeline,
+} from '@/components/report';
 import { SiteHeader } from '@/components/layout/site-header';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { PageBackground } from '@/components/layout/page-background';
 import { PageContainer } from '@/components/layout/page-container';
+import { SubscribeBox } from '@/components/public/SubscribeBox';
 import { Card } from '@/components/ui/card';
+import { isSubscriptionEmailConfigured } from '@/lib/email';
+import { getReportProjection } from '@/lib/public-read-model';
 
 export const revalidate = 3600;
+const LOCALE_MAP: Record<string, string> = { en: 'en-US', es: 'es-MX', zh: 'zh-CN' };
 
 type Props = {
   params: Promise<{ locale: string; slug: string }>;
 };
 
-async function fetchSession(slug: string) {
-  return await getBySlug(slug);
-}
-
-function uniqueStrings(values: Array<string | null | undefined>, limit: number) {
-  return Array.from(
-    new Set(
-      values
-        .map((value) => String(value || '').trim())
-        .filter(Boolean),
-    ),
-  ).slice(0, limit);
+function renameBreadcrumbItems(itemListElement: unknown, labels: string[]) {
+  if (!Array.isArray(itemListElement)) return itemListElement;
+  return itemListElement.map((item, index) => {
+    if (!item || typeof item !== 'object' || index >= labels.length) return item;
+    return {
+      ...(item as Record<string, unknown>),
+      name: labels[index],
+    };
+  });
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -50,11 +53,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       },
     };
   }
-  const session = await fetchSession(slug);
-  if (!session) return { title: 'Report not found' };
+  const report = await getPublishedReportBySlug(slug);
+  if (!report) {
+    return {
+      title: 'Report not found',
+      description: 'This published report is not available.',
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
 
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
-  const topic = session.topic;
+  const session = report.session;
+  const topic = report.head?.canonicalLabel || session.topic;
   const localizedPath = `${locale === 'en' ? '' : `/${locale}`}/report/${slug}`;
   const pageUrl = `${baseUrl}${localizedPath}`;
   const arts = ((session.meta as Record<string, unknown>)?.artifacts ?? {}) as Record<string, unknown>;
@@ -90,12 +103,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       images: [ogImageUrl],
     },
-    robots: quality.publishable
-      ? undefined
-      : {
-          index: false,
-          follow: false,
-        },
+    robots:
+      quality.publishable
+        ? undefined
+        : {
+            index: false,
+            follow: true,
+          },
     alternates: {
       canonical: pageUrl,
       languages: {
@@ -108,13 +122,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-const LOCALE_MAP: Record<string, string> = { en: 'en-US', es: 'es-MX', zh: 'zh-CN' };
-
 export default async function ReportPage({ params }: Props) {
   const { locale, slug } = await params;
   setRequestLocale(locale);
   const dateFmt = LOCALE_MAP[locale] ?? 'en-US';
-  if (!hasDb()) {
+  const projection = await getReportProjection(slug, locale);
+  if (projection.status === 'missing_db') {
     return (
       <div className="min-h-screen">
         <PageBackground />
@@ -141,101 +154,48 @@ export default async function ReportPage({ params }: Props) {
       </div>
     );
   }
-  const session = await fetchSession(slug);
-  if (!session || !session.published) notFound();
+  if (projection.status !== 'ok') notFound();
+  const [commonT, metadataT] = await Promise.all([
+    getTranslations({ locale, namespace: 'common' }),
+    getTranslations({ locale, namespace: 'metadata' }),
+  ]);
 
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://trendanalysis.ai';
-  const localizedPath = `${locale === 'en' ? '' : `/${locale}`}/report/${slug}`;
-  const pageUrl = `${baseUrl}${localizedPath}`;
-  const meta = (session.meta ?? {}) as Record<string, unknown>;
-  const artifacts = (meta.artifacts ?? {}) as Record<string, unknown>;
-  const evidence = (artifacts.evidence as { id: string; title: string; url: string; source: string; publishedAt: number; observedAt: number; timeKind: 'published' | 'observed'; excerpt?: string; aiSummary?: { bullets: string[]; entities?: string[]; catalysts?: string[]; sentiment?: 'bullish' | 'bearish' | 'mixed' | 'neutral'; confidence?: number } }[]) ?? [];
-  const tape = (artifacts.tape as { id: string; title: string; source: string; publishedAt: number; tags: string[]; evidenceId: string }[]) ?? [];
-  const nodes = (artifacts.nodes as { id: string; type: 'asset' | 'event' | 'entity' | 'source' | 'media'; label: string; meta?: Record<string, unknown> }[]) ?? [];
-  const edges = (artifacts.edges as { id: string; from: string; to: string; type: 'mentions' | 'co_moves' | 'hypothesis' | 'same_story'; confidence: number; evidenceIds: string[]; rationale?: string }[]) ?? [];
-  const clusters = (artifacts.clusters as { id: string; title: string; summary: string; momentum: 'rising' | 'steady' | 'fading'; evidenceIds: string[]; related: string[] }[]) ?? [];
-  const quality = summarizeReportQuality(evidence);
-  const sortedEvidence = [...evidence].sort((a, b) => {
-    const tsA = Math.max(Number(a.publishedAt || 0), Number(a.observedAt || 0));
-    const tsB = Math.max(Number(b.publishedAt || 0), Number(b.observedAt || 0));
-    return tsB - tsA;
-  });
-  const keyEvidence = pickKeyEvidence(sortedEvidence, 3);
-  const topCatalysts = collectTopLabels(sortedEvidence, 'catalysts', 6);
-  const topEntities = collectTopLabels(sortedEvidence, 'entities', 6);
-
-  const mode = (meta.mode as 'fast' | 'deep') ?? 'fast';
-  const monitorDiff = meta.monitorDiff as
-    | {
-        changeScore?: number;
-        significant?: boolean;
-        headline?: string;
-        summary?: string;
-        sentimentShift?: string;
-        newEvidence?: Array<{ title: string; url: string; source: string }>;
-        newCatalysts?: string[];
-      }
-    | undefined;
-  const createdAt = session._creationTime;
-  const date = new Date(createdAt).toISOString();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const assetKey = (session as any).assetKey as string | undefined;
-  const assetLabel = assetKey
-    ? decodeURIComponent(assetKey).replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-    : null;
-  const peerAssets = uniqueStrings(
-    nodes
-      .filter((node) => node.type === 'asset')
-      .map((node) => node.label)
-      .filter((label) => label.toLowerCase() !== session.topic.toLowerCase()),
-    5,
-  );
-  const whatMoved = uniqueStrings(
-    [
-      ...clusters.slice(0, 2).map((cluster) => cluster.summary),
-      ...keyEvidence.flatMap((item) => item.aiSummary?.bullets || []),
-      ...keyEvidence.map((item) => item.excerpt || item.title),
-    ],
-    4,
-  );
-  const whyItMatters = uniqueStrings(
-    [
-      topCatalysts.length ? `Recurring catalysts in the current evidence set: ${topCatalysts.slice(0, 4).join(', ')}.` : '',
-      peerAssets.length ? `Cross-market or peer read-through appears in ${peerAssets.slice(0, 4).join(', ')}.` : '',
-      monitorDiff?.summary || '',
-      topEntities.length ? `Entities driving the narrative include ${topEntities.slice(0, 4).join(', ')}.` : '',
-    ],
-    4,
-  );
-
-  // Fetch related reports for the same asset
-  let relatedReports: { slug: string; topic: string; date: number }[] = [];
-  if (assetKey) {
-    try {
-      const siblings = filterPublishableSessions(await listByAsset(assetKey, 6));
-      relatedReports = siblings
-        .filter((s) => s.slug && s.slug !== slug)
-        .slice(0, 3)
-        .map((s) => ({ slug: s.slug!, topic: s.topic, date: s._creationTime }));
-    } catch {
-      // Non-critical — skip related reports
-    }
-  }
-
-  const jsonLd = {
-    '@context': 'https://schema.org',
-    '@type': 'Article',
-    headline: `${session.topic} — TrendAnalysis Report`,
-    url: pageUrl,
-    mainEntityOfPage: pageUrl,
-    datePublished: date,
-    description: `TrendAnalysis report for ${session.topic} with ${evidence.length} evidence sources.`,
-    inLanguage: locale,
-    author: {
-      '@type': 'Organization',
-      name: 'TrendAnalysis.ai',
-    },
+  const {
+    assetKey,
+    assetLabel,
+    breadcrumbJsonLd,
+    changeSummary,
+    comparisonCards,
+    currentComparison,
+    currentSummary,
+    date,
+    displayTopic,
+    edges,
+    jumpLinks,
+    jsonLd,
+    mode,
+    nodes,
+    pageUrl,
+    quality,
+    relatedReports,
+    report,
+    sortedEvidence,
+    tape,
+  } = projection;
+  const session = report.session;
+  const clusters = currentSummary.clusters;
+  const whatMoved = currentSummary.whatMoved;
+  const whyItMatters = currentSummary.whyItMatters;
+  const peerAssets = currentSummary.peerAssets;
+  const subscriptionsEnabled = Boolean(assetKey && assetLabel && isSubscriptionEmailConfigured());
+  const localizedBreadcrumbJsonLd = {
+    ...breadcrumbJsonLd,
+    itemListElement: renameBreadcrumbItems(
+      breadcrumbJsonLd.itemListElement,
+      assetKey && assetLabel
+        ? [commonT('home'), metadataT('assetIndexTitle'), assetLabel, displayTopic]
+        : [commonT('home'), displayTopic],
+    ),
   };
 
   return (
@@ -248,22 +208,49 @@ export default async function ReportPage({ params }: Props) {
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(localizedBreadcrumbJsonLd) }}
+        />
+
+        {!report.isCurrent && report.head?.currentSlug ? (
+          <Card className="border-[rgba(255,180,120,0.24)] bg-[rgba(255,180,120,0.06)] p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[rgba(255,210,170,0.85)]">
+                  Historical Version
+                </div>
+                <p className="mt-1 text-sm text-white/72">
+                  You are viewing a superseded report. A newer current report is available for this semantic head.
+                </p>
+              </div>
+              <Link
+                href={`/report/${report.head.currentSlug}`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/84 transition hover:bg-white/[0.08]"
+              >
+                View current report &rarr;
+              </Link>
+            </div>
+          </Card>
+        ) : null}
 
         {/* Breadcrumb */}
         <nav className="flex items-center gap-1.5 text-xs text-white/50">
-          <Link href="/" className="transition hover:text-white/70">Home</Link>
+          <Link href="/" className="transition hover:text-white/70">{commonT('home')}</Link>
           <span>&rsaquo;</span>
           {assetKey && assetLabel ? (
             <>
+              <Link href="/asset" className="transition hover:text-white/70">{metadataT('assetIndexTitle')}</Link>
+              <span>&rsaquo;</span>
               <Link href={`/asset/${assetKey}`} className="transition hover:text-white/70">{assetLabel}</Link>
               <span>&rsaquo;</span>
             </>
           ) : null}
-          <span className="text-white/35">Report</span>
+          <span className="text-white/35">{displayTopic}</span>
         </nav>
 
         <ReportHeader
-          topic={session.topic}
+          topic={displayTopic}
           date={date}
           mode={mode}
           stats={{
@@ -275,6 +262,22 @@ export default async function ReportPage({ params }: Props) {
             secondaryCount: quality.secondaryCount,
           }}
         />
+
+        {jumpLinks.length > 0 ? (
+          <Card className="p-4">
+            <div className="flex flex-wrap gap-2">
+              {jumpLinks.map((link) => (
+                <a
+                  key={link.id}
+                  href={`#${link.id}`}
+                  className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/72 transition hover:border-white/18 hover:bg-white/[0.06] hover:text-white/88"
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </Card>
+        ) : null}
 
         {!quality.publishable ? (
           <Card className="border-amber-400/20 bg-amber-400/5 p-5">
@@ -291,7 +294,7 @@ export default async function ReportPage({ params }: Props) {
           </Card>
         ) : null}
 
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div id="summary" className="grid gap-4 lg:grid-cols-3 scroll-mt-28">
           <Card className="p-5 lg:col-span-1">
             <h2 className="text-sm font-semibold text-white/84">What moved</h2>
             <div className="mt-3 space-y-2">
@@ -325,8 +328,40 @@ export default async function ReportPage({ params }: Props) {
           </Card>
 
           <Card className="p-5 lg:col-span-1">
-            <h2 className="text-sm font-semibold text-white/84">Cross-market and source footing</h2>
+            <h2 className="text-sm font-semibold text-white/84">Asset hub context</h2>
             <div className="mt-3 space-y-3 text-sm text-white/62">
+              {assetKey && assetLabel ? (
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Canonical hub</div>
+                  <div className="mt-2">
+                    <Link
+                      href={`/asset/${assetKey}`}
+                      className="inline-flex items-center gap-1.5 text-sm text-[rgba(120,196,255,0.85)] transition hover:text-white/82"
+                    >
+                      Open {assetLabel} asset hub &rarr;
+                    </Link>
+                  </div>
+                  {subscriptionsEnabled ? (
+                    <div className="mt-4">
+                      <SubscribeBox assetKey={assetKey} assetLabel={assetLabel} />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Recurring catalysts</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {currentSummary.topCatalysts.length ? (
+                    currentSummary.topCatalysts.slice(0, 4).map((label) => (
+                      <span key={label} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70">
+                        {label}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-white/50">No recurring catalysts extracted from this report.</span>
+                  )}
+                </div>
+              </div>
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Top domains</div>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -355,30 +390,47 @@ export default async function ReportPage({ params }: Props) {
                   )}
                 </div>
               </div>
+              {relatedReports.length > 0 ? (
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Recent sibling analyses</div>
+                  <div className="mt-2 space-y-2">
+                    {relatedReports.slice(0, 2).map((item) => (
+                      <Link
+                        key={item.slug}
+                        href={`/report/${item.slug}`}
+                        className="block rounded-xl border border-white/[0.08] bg-white/[0.02] px-3 py-2 transition hover:border-white/15 hover:bg-white/[0.04]"
+                      >
+                        <div className="text-xs font-medium text-white/78">{item.topic}</div>
+                        <div className="mt-1 text-[11px] text-white/42">{new Date(item.date).toLocaleDateString(dateFmt)}</div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </Card>
         </div>
 
-        {monitorDiff?.headline && monitorDiff?.summary ? (
-          <Card className="p-5">
+        {changeSummary ? (
+          <Card id="changes" className="scroll-mt-28 p-5">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm font-semibold text-white/85">What Changed Since Last Run</h3>
-              {typeof monitorDiff.changeScore === 'number' ? (
+              <h3 className="text-sm font-semibold text-white/85">{changeSummary.title}</h3>
+              {typeof changeSummary.changeScore === 'number' ? (
                 <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/55">
-                  Score {monitorDiff.changeScore}
+                  Score {changeSummary.changeScore}
                 </span>
               ) : null}
-              {monitorDiff.sentimentShift ? (
+              {changeSummary.sentimentShift ? (
                 <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/55">
-                  {monitorDiff.sentimentShift}
+                  {changeSummary.sentimentShift}
                 </span>
               ) : null}
             </div>
-            <p className="mt-3 text-sm font-semibold text-white/82">{monitorDiff.headline}</p>
-            <p className="mt-2 text-sm leading-relaxed text-white/60">{monitorDiff.summary}</p>
-            {Array.isArray(monitorDiff.newEvidence) && monitorDiff.newEvidence.length > 0 ? (
+            <p className="mt-3 text-sm font-semibold text-white/82">{changeSummary.headline}</p>
+            <p className="mt-2 text-sm leading-relaxed text-white/60">{changeSummary.summary}</p>
+            {Array.isArray(changeSummary.newEvidence) && changeSummary.newEvidence.length > 0 ? (
               <div className="mt-4 space-y-2">
-                {monitorDiff.newEvidence.slice(0, 3).map((item) => (
+                {changeSummary.newEvidence.slice(0, 3).map((item) => (
                   <a
                     key={item.url}
                     href={item.url}
@@ -395,17 +447,70 @@ export default async function ReportPage({ params }: Props) {
           </Card>
         ) : null}
 
-        <EvidenceList evidence={sortedEvidence} />
+        <section id="evidence" className="scroll-mt-28">
+          <EvidenceList evidence={sortedEvidence} />
+        </section>
 
-        {clusters.length > 0 && <ClustersSummary clusters={clusters} />}
+        {clusters.length > 0 ? (
+          <section id="clusters" className="scroll-mt-28">
+            <ClustersSummary clusters={clusters} />
+          </section>
+        ) : null}
 
-        {tape.length > 2 ? <StaticTimeline items={tape} /> : null}
+        {tape.length > 2 ? (
+          <section id="timeline" className="scroll-mt-28">
+            <StaticTimeline items={tape} />
+          </section>
+        ) : null}
 
-        {nodes.length > 0 ? <StaticMindMap topic={session.topic} nodes={nodes} edges={edges} /> : null}
+        {nodes.length > 0 ? (
+          <section id="mind-map" className="scroll-mt-28">
+            <StaticMindMap topic={displayTopic} nodes={nodes} edges={edges} />
+          </section>
+        ) : null}
+
+        {comparisonCards.length > 0 ? (
+          <Card id="comparison-context" className="scroll-mt-28 p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white/80">
+                {currentComparison ? 'Related Comparison Heads' : 'Comparison Heads For This Asset'}
+              </h3>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {comparisonCards.map((item) => (
+                <Link
+                  key={item.definition.key}
+                  href={item.href}
+                  className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 transition hover:border-white/15 hover:bg-white/[0.04]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-white/82">{item.definition.label}</div>
+                      <p className="mt-2 text-xs leading-relaxed text-white/56">{item.definition.buyerIntentSummary}</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {item.definition.aliasesZh.slice(0, 2).map((alias) => (
+                          <span key={alias} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70">
+                            {alias}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-right text-[11px] text-[rgba(120,196,255,0.85)]">
+                      <div>{item.ctaLabel} &rarr;</div>
+                      {item.lastUpdatedAt ? (
+                        <div className="mt-1 text-white/42">{new Date(item.lastUpdatedAt).toLocaleDateString(dateFmt)}</div>
+                      ) : null}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </Card>
+        ) : null}
 
         {/* Related reports for same asset */}
         {assetKey && assetLabel && (
-          <Card className="p-5">
+          <Card id="asset-context" className="scroll-mt-28 p-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-white/80">More {assetLabel} Analyses</h3>
               <Link
@@ -425,6 +530,9 @@ export default async function ReportPage({ params }: Props) {
                   >
                     <div className="text-xs font-medium text-white/75">{r.topic}</div>
                     <div className="mt-1 text-[10px] text-white/40">{new Date(r.date).toLocaleDateString(dateFmt)}</div>
+                    {r.summary ? (
+                      <div className="mt-2 text-[11px] leading-relaxed text-white/52">{r.summary}</div>
+                    ) : null}
                   </Link>
                 ))}
               </div>
@@ -436,8 +544,8 @@ export default async function ReportPage({ params }: Props) {
 
         <ShareBar
           url={pageUrl}
-          title={`${session.topic} — TrendAnalysis Report`}
-          topic={session.topic}
+          title={`${displayTopic} — TrendAnalysis Report`}
+          topic={displayTopic}
         />
 
         <Card className="p-5">
@@ -449,6 +557,14 @@ export default async function ReportPage({ params }: Props) {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              {assetKey ? (
+                <Link
+                  href={`/asset/${assetKey}`}
+                  className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/78 transition hover:bg-white/[0.06]"
+                >
+                  Open asset hub
+                </Link>
+              ) : null}
               <Link
                 href={`/terminal?sessionId=${encodeURIComponent(session.sessionId)}`}
                 className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/78 transition hover:bg-white/[0.06]"

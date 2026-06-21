@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { hasDb, getSession, listEventsPage } from '@/lib/db';
 import { createLogger } from '@/lib/log';
+import { isAuthorizedSessionAccess } from '@/lib/session-write-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,11 +37,22 @@ export async function GET(request: Request) {
   }
 
   const { sessionId, limit, cursor } = parsed.data;
-
   const session = await getSession(sessionId);
   if (!session) {
     log.warn('sessions.events.session_not_found', { sessionId, ms: Date.now() - startedAt });
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    return NextResponse.json({ error: 'Session not found', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+
+  const isPublicReplay = session.published === true;
+  if (!isPublicReplay && !isAuthorizedSessionAccess(request, sessionId)) {
+    log.warn('sessions.events.unauthorized', { sessionId, ms: Date.now() - startedAt });
+    return NextResponse.json(
+      {
+        error: 'Private session access expired or unavailable',
+        code: 'SESSION_PRIVATE',
+      },
+      { status: 403 },
+    );
   }
 
   let page: Awaited<ReturnType<typeof listEventsPage>>;
@@ -63,6 +75,7 @@ export async function GET(request: Request) {
         status: session.status,
         step: session.step,
         progress: session.progress,
+        published: session.published,
         meta: session.meta,
       },
       events: page.items,

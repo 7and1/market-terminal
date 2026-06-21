@@ -13,7 +13,7 @@ export type VideoItem = {
 export type VideosResponse = {
   topic: string;
   fetchedAt: number;
-  mode: 'brightdata' | 'mock';
+  mode: 'brightdata' | 'unavailable';
   items: VideoItem[];
   error?: string;
 };

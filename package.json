@@ -5,18 +5,20 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "build:cf": "npx @opennextjs/cloudflare build",
-    "preview:cf": "npx wrangler dev",
-    "deploy:cf": "npx wrangler pages deploy",
+    "preview:openclaw": "bash scripts/openclaw-preview.sh",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --pool=forks --poolOptions.forks.maxForks=1 --poolOptions.forks.minForks=1",
     "test:watch": "vitest",
+    "test:browser": "playwright test --config playwright.config.ts",
+    "test:browser:install": "playwright install chromium",
+    "test:browser:openclaw": "bash scripts/openclaw-browser-validate.sh",
     "cleanup:sessions": "node scripts/cleanup-expired-sessions.mjs",
     "monitors:dispatch": "node scripts/dispatch-monitors.mjs",
     "schema:apply": "node scripts/apply-schema.mjs",
-    "keyword-research": "npx tsx scripts/keyword-research.ts"
+    "keyword-research": "npx tsx scripts/keyword-research.ts",
+    "seed:canonical": "npx tsx scripts/seed-canonical-heads.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.15",
@@ -43,7 +45,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.17.1",
+    "@playwright/test": "^1.51.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.11.11",

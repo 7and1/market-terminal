@@ -126,22 +126,6 @@ export async function consumeSseStream({ response, signal, onEvent }: {
   }
 }
 
-export function buildSeries(startAt: number): { y: number[]; t: number[] } {
-  const points = 120;
-  const y: number[] = [];
-  const t: number[] = [];
-  let p = 100;
-  for (let i = 0; i < points; i += 1) {
-    const ts = startAt - (points - 1 - i) * 12 * 60_000;
-    t.push(ts);
-    const drift = Math.sin(i / 11) * 0.32 + Math.cos(i / 8) * 0.2;
-    const noise = (Math.random() - 0.5) * 0.8;
-    p = Math.max(74, Math.min(132, p + drift + noise));
-    y.push(Number(p.toFixed(2)));
-  }
-  return { y, t };
-}
-
 export function buildMediaGraph({ topic, videos, evidence, baseNodes }: {
   topic: string;
   videos: VideosResponse | null;
@@ -149,6 +133,7 @@ export function buildMediaGraph({ topic, videos, evidence, baseNodes }: {
   baseNodes: GraphNode[];
 }): { mediaNodes: GraphNode[]; mediaEdges: GraphEdge[] } {
   const items = videos?.items || [];
+  if (videos?.mode !== 'brightdata') return { mediaNodes: [], mediaEdges: [] };
   if (!items.length || !evidence.length) return { mediaNodes: [], mediaEdges: [] };
   const assetId =
     baseNodes.find((n) => n.type === 'asset')?.id ||
@@ -171,15 +156,14 @@ export function buildMediaGraph({ topic, videos, evidence, baseNodes }: {
       .sort((a, b) => b.score - a.score)
       .slice(0, 2);
     const linkedEvidence = ranked.filter((r) => r.score > 0).map((r) => r.ev.id);
-    const fallbackEvidence = evidence[0]?.id ? [evidence[0].id] : [];
-    const eids = linkedEvidence.length ? linkedEvidence : fallbackEvidence;
     mediaEdges.push({
       id: `e_media_${String(v.id || '').slice(0, 20)}_asset`,
       from: nodeId,
       to: assetId,
       type: 'same_story',
       confidence: linkedEvidence.length ? 0.44 : 0.2,
-      evidenceIds: eids,
+      evidenceIds: linkedEvidence,
+      origin: 'heuristic',
       rationale: linkedEvidence.length ? 'Video headline overlaps with evidence headlines.' : 'Related market video captured for this run.',
     });
   }

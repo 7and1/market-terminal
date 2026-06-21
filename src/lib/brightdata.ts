@@ -1,6 +1,8 @@
 import { brightDataSerpZone, env } from '@/lib/env';
 import { getOrComputeCached, buildCacheKey } from '@/lib/server-cache';
 import { normalizeProviderError, providerErrorFromStatus } from '@/lib/provider-error';
+import { assertProviderBudget, recordProviderCall } from '@/lib/budget-guard';
+import { getRecentRawDocument, insertSerpSnapshot, upsertRawDocument } from '@/lib/db';
 
 export type SerpResult = {
   title: string;
@@ -37,6 +39,7 @@ async function brightDataRequestText(url: string, dataFormat?: string, zoneOverr
         let resp: Response;
         let text = '';
         try {
+          await assertProviderBudget('brightdata');
           resp = await fetch('https://api.brightdata.com/request', {
             method: 'POST',
             cache: 'no-store',
@@ -48,7 +51,9 @@ async function brightDataRequestText(url: string, dataFormat?: string, zoneOverr
             body,
           });
           text = await resp.text();
+          await recordProviderCall('brightdata', { ok: resp.ok, operation: dataFormat || 'raw' });
         } catch (e) {
+          await recordProviderCall('brightdata', { ok: false, operation: dataFormat || 'raw' });
           const err = normalizeProviderError('brightdata', e, 'Bright Data request failed');
           if (err.retryable && attempt < maxAttempts) {
             await sleepMs(250 * attempt + Math.random() * 220);
@@ -79,7 +84,19 @@ async function brightDataRequestText(url: string, dataFormat?: string, zoneOverr
 }
 
 export async function brightDataRequestMarkdown(url: string) {
-  return brightDataRequestText(url, 'markdown');
+  const reused = await getRecentRawDocument(url, env.pipeline.rawDocReuseHours).catch(() => null);
+  if (reused) return reused;
+
+  const markdown = await brightDataRequestText(url, 'markdown');
+  await upsertRawDocument({
+    url,
+    markdown,
+    meta: {
+      provider: 'brightdata',
+      reuseHours: env.pipeline.rawDocReuseHours,
+    },
+  }).catch(() => {});
+  return markdown;
 }
 
 export async function probeBrightDataMarkdown(url = 'https://example.com/') {
@@ -116,6 +133,13 @@ export function parseSerpMarkdown(md: string): SerpResult[] {
 }
 
 export type SerpJsonFormat = 'light_json_google' | 'full_json_google' | 'parsed_bing' | 'markdown';
+
+function googleLocaleParams(locale?: string | null) {
+  const normalized = String(locale || '').toLowerCase();
+  if (normalized.startsWith('zh')) return { hl: 'zh-CN', gl: 'cn' };
+  if (normalized.startsWith('es')) return { hl: 'es', gl: 'mx' };
+  return { hl: 'en', gl: 'us' };
+}
 
 function normalizeSerpUrl(url: string) {
   try {
@@ -248,18 +272,21 @@ export async function brightDataSerpGoogle({
   format = 'light_json_google',
   vertical = 'web',
   recency,
+  locale,
 }: {
   query: string;
   format?: SerpJsonFormat;
   vertical?: 'web' | 'news';
   recency?: 'h' | 'd' | 'w' | 'm' | 'y' | '';
+  locale?: string | null;
 }): Promise<SerpResult[]> {
   const q = query.trim();
   if (!q) return [];
 
+  const { hl, gl } = googleLocaleParams(locale);
   const tbm = vertical === 'news' ? '&tbm=nws' : '';
   const tbs = recency ? `&tbs=qdr:${recency}` : '';
-  const url = `https://www.google.com/search?q=${encodeURIComponent(q)}&hl=en&gl=us&num=10${tbm}${tbs}`;
+  const url = `https://www.google.com/search?q=${encodeURIComponent(q)}&hl=${encodeURIComponent(hl)}&gl=${encodeURIComponent(gl)}&num=10${tbm}${tbs}`;
 
   // Preferred: structured JSON when available (fast + low-noise).
   // Fallback: markdown parsing (works everywhere, but noisier).
@@ -267,16 +294,22 @@ export async function brightDataSerpGoogle({
     format === 'full_json_google' ? 'parsed' : format === 'light_json_google' ? 'parsed_light' : format === 'markdown' ? 'markdown' : 'markdown';
 
   const text = await brightDataRequestText(url, dataFormat, brightDataSerpZone());
+  let results: SerpResult[] = [];
 
   if (dataFormat !== 'markdown') {
     try {
       const parsed = JSON.parse(text);
-      const results = parseSerpJson(parsed);
-      if (results.length) return results;
+      results = parseSerpJson(parsed);
+      if (results.length) {
+        await insertSerpSnapshot({ query: q, results }).catch(() => {});
+        return results;
+      }
     } catch {
       // ignore and fall back
     }
   }
 
-  return parseSerpMarkdown(text);
+  results = parseSerpMarkdown(text);
+  await insertSerpSnapshot({ query: q, results }).catch(() => {});
+  return results;
 }

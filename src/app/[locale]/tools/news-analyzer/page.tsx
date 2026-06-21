@@ -70,82 +70,6 @@ const features = [
   },
 ];
 
-function ExampleOutput() {
-  return (
-    <div className="space-y-3">
-      <div className="flex gap-3">
-        <div className="flex flex-col items-center">
-          <div className="h-2 w-2 rounded-full bg-[var(--blue)]" />
-          <div className="h-full w-px bg-white/10" />
-        </div>
-        <div className="pb-4">
-          <p className="text-[10px] font-semibold text-white/40">14:32 UTC</p>
-          <p className="mt-1 text-xs text-white/75">
-            Fed Chair signals potential rate pause in upcoming meeting
-          </p>
-          <div className="mt-1.5 flex gap-1.5">
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/50">
-              Fed
-            </span>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/50">
-              Rates
-            </span>
-            <span className="rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[10px] text-green-400">
-              Rising
-            </span>
-          </div>
-        </div>
-      </div>
-      <div className="flex gap-3">
-        <div className="flex flex-col items-center">
-          <div className="h-2 w-2 rounded-full bg-[rgba(120,196,255,0.7)]" />
-          <div className="h-full w-px bg-white/10" />
-        </div>
-        <div className="pb-4">
-          <p className="text-[10px] font-semibold text-white/40">15:10 UTC</p>
-          <p className="mt-1 text-xs text-white/75">
-            S&P 500 futures rise 0.4% on rate pause expectations
-          </p>
-          <div className="mt-1.5 flex gap-1.5">
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/50">
-              SPX
-            </span>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/50">
-              Futures
-            </span>
-            <span className="rounded-full border border-green-500/30 bg-green-500/10 px-2 py-0.5 text-[10px] text-green-400">
-              Rising
-            </span>
-          </div>
-        </div>
-      </div>
-      <div className="flex gap-3">
-        <div className="flex flex-col items-center">
-          <div className="h-2 w-2 rounded-full bg-[rgba(170,209,255,0.6)]" />
-          <div className="h-0 w-px" />
-        </div>
-        <div>
-          <p className="text-[10px] font-semibold text-white/40">16:45 UTC</p>
-          <p className="mt-1 text-xs text-white/75">
-            Treasury yields drop as bond markets price in dovish shift
-          </p>
-          <div className="mt-1.5 flex gap-1.5">
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/50">
-              Bonds
-            </span>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] text-white/50">
-              Yields
-            </span>
-            <span className="rounded-full border border-yellow-500/30 bg-yellow-500/10 px-2 py-0.5 text-[10px] text-yellow-400">
-              Steady
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default async function NewsAnalyzerPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
@@ -187,7 +111,6 @@ export default async function NewsAnalyzerPage({ params }: { params: Promise<{ l
         'Package the timeline and catalyst layer as a dedicated product capability for news-driven users.',
       ]}
       searchPlaceholder="e.g. Fed rate decision impact, oil price catalysts..."
-      exampleOutput={<ExampleOutput />}
       statsLine="Tracks up to 12 timeline events and 6 story clusters per analysis session."
       apiSurface={[
         {

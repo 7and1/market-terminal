@@ -31,6 +31,16 @@ export type SessionMeta = JsonRecord & {
     newCatalysts: string[];
     deliveryError?: string;
   };
+  refreshDiff?: {
+    changeScore: number;
+    headline: string;
+    summary: string;
+    sentimentShift: 'improved' | 'worsened' | 'mixed' | 'flat';
+    newEvidence: Array<{ title: string; url: string; source: string }>;
+    newCatalysts: string[];
+    previousSessionId?: string | null;
+    deliveryError?: string;
+  };
   plan?: {
     queries?: string[];
     angles?: string[];

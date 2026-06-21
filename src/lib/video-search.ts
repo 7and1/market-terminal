@@ -14,7 +14,7 @@ export type VideoItem = {
 export type VideosResponse = {
   topic: string;
   fetchedAt: number;
-  mode: 'brightdata' | 'mock';
+  mode: 'brightdata' | 'unavailable';
   items: VideoItem[];
   error?: string;
 };
@@ -76,30 +76,14 @@ async function fetchYouTubeOEmbed(url: string) {
   return (await resp.json()) as { title?: string; author_name?: string; thumbnail_url?: string };
 }
 
-export function mockItems(topic: string): VideoItem[] {
-  const q = encodeURIComponent(`${topic} market news analysis`);
-  const searchUrl = `https://www.youtube.com/results?search_query=${q}`;
-  return [
-    { id: 'mock_1', title: `Latest: ${topic} tape recap`, channel: 'Video Pulse' },
-    { id: 'mock_2', title: `Explainer: what moved ${topic} today`, channel: 'Video Pulse' },
-    { id: 'mock_3', title: `Cross-asset: ${topic} spillovers`, channel: 'Video Pulse' },
-  ].map((v) => ({
-    id: v.id,
-    title: v.title,
-    channel: v.channel,
-    url: searchUrl,
-    thumbnail: '',
-    provider: 'YouTube',
-  }));
-}
-
-export async function fetchVideosForTopic(topic: string, limit: number): Promise<VideosResponse> {
+export async function fetchVideosForTopic(topic: string, limit: number, locale?: string | null): Promise<VideosResponse> {
   const fetchedAt = Date.now();
-  const cacheKey = buildCacheKey(['videos', topic.trim().toLowerCase(), limit]);
+  const cacheKey = buildCacheKey(['videos', topic.trim().toLowerCase(), limit, locale || 'en']);
 
   return getOrComputeCached({
     key: cacheKey,
     ttlMs: VIDEOS_TTL_MS,
+    shouldCache: (value) => value.mode === 'brightdata' && value.items.length > 0,
     loader: async () => {
       try {
         const queries = [
@@ -109,7 +93,7 @@ export async function fetchVideosForTopic(topic: string, limit: number): Promise
 
         let serp: SerpResult[] = [];
         for (const q of queries) {
-          const results = await brightDataSerpGoogle({ query: q, format: 'light_json_google' });
+          const results = await brightDataSerpGoogle({ query: q, format: 'light_json_google', locale });
           serp = serp.concat(results);
         }
 
@@ -139,21 +123,20 @@ export async function fetchVideosForTopic(topic: string, limit: number): Promise
           .map((r) => r.value)
           .slice(0, limit);
 
-        const ok = items.length > 0;
         return {
           topic,
           fetchedAt,
-          mode: ok ? 'brightdata' : 'mock',
-          items: ok ? items : mockItems(topic).slice(0, limit),
-          ...(ok ? {} : { error: 'No YouTube items extracted from SERP; returning mock videos.' }),
+          mode: items.length ? 'brightdata' : 'unavailable',
+          items,
+          ...(items.length ? {} : { error: 'No YouTube items extracted from SERP.' }),
         };
       } catch (e) {
         const err = normalizeProviderError('brightdata', e, 'Video discovery failed');
         return {
           topic,
           fetchedAt,
-          mode: 'mock',
-          items: mockItems(topic).slice(0, limit),
+          mode: 'unavailable',
+          items: [],
           error: err.message,
         };
       }

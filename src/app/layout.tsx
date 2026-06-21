@@ -1,20 +1,13 @@
-import { getLocale } from 'next-intl/server';
-import { JetBrains_Mono, Space_Grotesk } from 'next/font/google';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale, getMessages } from 'next-intl/server';
 import Script from 'next/script';
 
 import './globals.css';
 
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  variable: '--font-sans',
-  weight: ['400', '500', '600', '700'],
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-mono',
-  weight: ['400', '500', '600'],
-});
+const fontVars = {
+  '--font-sans': '"Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif',
+  '--font-mono': '"SF Mono", "JetBrains Mono", Menlo, Monaco, monospace',
+} as React.CSSProperties;
 
 export default async function RootLayout({
   children,
@@ -22,6 +15,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const locale = await getLocale();
+  const messages = await getMessages();
 
   return (
     <html lang={locale}>
@@ -48,8 +42,10 @@ export default async function RootLayout({
           />
         )}
       </head>
-      <body suppressHydrationWarning className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} antialiased`}>
-        {children}
+      <body suppressHydrationWarning className="antialiased" style={fontVars}>
+        <NextIntlClientProvider locale={locale} messages={messages}>
+          {children}
+        </NextIntlClientProvider>
       </body>
     </html>
   );

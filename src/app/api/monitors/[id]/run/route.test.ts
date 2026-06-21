@@ -16,8 +16,19 @@ vi.mock('@/lib/monitoring', () => ({
 describe('/api/monitors/[id]/run POST', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    process.env.OPERATOR_TOKEN = 'operator-secret';
     hasDb.mockReturnValue(true);
     toPublicMonitor.mockImplementation((monitor) => monitor ? { ...monitor, notifyWebhookUrl: null, hasNotifyWebhook: Boolean(monitor.notifyWebhookUrl) } : null);
+  });
+
+  it('returns 403 without operator auth', async () => {
+    const { POST } = await import('@/app/api/monitors/[id]/run/route');
+    const response = await POST(
+      new Request('http://localhost/api/monitors/id/run', { method: 'POST' }),
+      { params: Promise.resolve({ id: '1cb63266-2f69-4bb6-97c2-2d62e5f14df5' }) },
+    );
+
+    expect(response.status).toBe(403);
   });
 
   it('returns 409 when the monitor already has an active run', async () => {
@@ -25,7 +36,10 @@ describe('/api/monitors/[id]/run POST', () => {
 
     const { POST } = await import('@/app/api/monitors/[id]/run/route');
     const response = await POST(
-      new Request('http://localhost/api/monitors/id/run', { method: 'POST' }),
+      new Request('http://localhost/api/monitors/id/run', {
+        method: 'POST',
+        headers: { 'x-operator-token': 'operator-secret' },
+      }),
       { params: Promise.resolve({ id: '1cb63266-2f69-4bb6-97c2-2d62e5f14df5' }) },
     );
 
@@ -41,7 +55,10 @@ describe('/api/monitors/[id]/run POST', () => {
 
     const { POST } = await import('@/app/api/monitors/[id]/run/route');
     const response = await POST(
-      new Request('http://localhost/api/monitors/id/run', { method: 'POST' }),
+      new Request('http://localhost/api/monitors/id/run', {
+        method: 'POST',
+        headers: { 'x-operator-token': 'operator-secret' },
+      }),
       { params: Promise.resolve({ id: '1cb63266-2f69-4bb6-97c2-2d62e5f14df5' }) },
     );
     const json = await response.json();

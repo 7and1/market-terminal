@@ -93,6 +93,8 @@ describe('terminal-reducer', () => {
     const published = terminalReducer(used, {
       type: 'publish/success',
       report: {
+        slug: 'x',
+        locale: 'en',
         fullUrl: 'https://trendanalysis.ai/report/x',
         relativeUrl: '/report/x',
         alreadyPublished: false,

@@ -293,6 +293,7 @@ export async function buildArtifacts({
       system: artifactsPrompt.system,
       user: artifactsPrompt.user,
       temperature: mode === 'fast' ? 0.1 : 0.25,
+      maxTokens: mode === 'fast' ? 1100 : 1600,
       telemetry: { tag: 'artifacts', onUsage: onAiUsage },
     });
   } catch (e) {
@@ -314,6 +315,7 @@ export async function buildArtifacts({
         system: repairPrompt.system,
         user: repairPrompt.user,
         temperature: 0,
+        maxTokens: 1200,
         telemetry: { tag: mode === 'fast' ? 'artifacts.repair.fast' : 'artifacts.repair', onUsage: onAiUsage },
       });
     } catch (e2) {
@@ -339,6 +341,7 @@ export async function buildArtifacts({
       ...e,
       evidenceIds: e.evidenceIds.filter((id) => evidenceIds.has(id)).slice(0, 6),
       confidence: Math.max(0, Math.min(1, e.confidence)),
+      origin: 'ai' as const,
       rationale: typeof e.rationale === 'string' ? truncateText(e.rationale, 160) : undefined,
     }))
     .filter((e) => e.from !== e.to)
@@ -357,14 +360,17 @@ export async function buildArtifacts({
       evidenceId: t.evidenceId,
     }));
 
-  const clusters: StoryCluster[] = out.clusters.slice(0, 5).map((c, idx) => ({
-    id: `c${idx + 1}`,
-    title: c.title,
-    summary: c.summary,
-    momentum: c.momentum,
-    evidenceIds: c.evidenceIds.filter((id) => evidenceIds.has(id)).slice(0, 8),
-    related: Array.from(new Set(c.related.map((r) => truncateText(r, 12)).filter(Boolean))).slice(0, 8),
-  }));
+  const clusters: StoryCluster[] = out.clusters
+    .slice(0, 5)
+    .map((c, idx) => ({
+      id: `c${idx + 1}`,
+      title: c.title,
+      summary: c.summary,
+      momentum: c.momentum,
+      evidenceIds: c.evidenceIds.filter((id) => evidenceIds.has(id)).slice(0, 8),
+      related: Array.from(new Set(c.related.map((r) => truncateText(r, 12)).filter(Boolean))).slice(0, 8),
+    }))
+    .filter((cluster) => cluster.evidenceIds.length > 0);
 
   const seeded = ensureMinimumGraph({ topic, evidence, nodes, edges });
   const enriched = enrichGraphFromTapeAndEvidence({ topic, evidence, tape, nodes: seeded.nodes, edges: seeded.edges });

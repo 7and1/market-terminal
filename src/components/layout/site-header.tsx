@@ -1,17 +1,17 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
-  Activity,
+  ArrowUpRight,
   BarChart3,
   Globe,
   Menu,
   TrendingUp,
 } from 'lucide-react';
 
-import { Link } from '@/i18n/navigation';
+import { Link, usePathname } from '@/i18n/navigation';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import {
@@ -35,19 +35,14 @@ const LOCALE_LABELS: Record<string, string> = {
 };
 
 export function SiteHeader({ className }: { className?: string }) {
-  const rawPathname = usePathname();
+  const pathname = usePathname() || '/';
+  const searchParams = useSearchParams();
   const locale = useLocale();
   const t = useTranslations('nav');
-  const common = useTranslations('common');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathnameWithSearch = `${pathname}${searchParams?.toString() ? `?${searchParams.toString()}` : ''}`;
 
   const NAV_ITEMS = [
-    {
-      href: '/terminal' as const,
-      label: t('terminal'),
-      icon: Activity,
-      matches: ['/terminal'],
-    },
     {
       href: '/trending' as const,
       label: t('reports'),
@@ -56,14 +51,11 @@ export function SiteHeader({ className }: { className?: string }) {
     },
     {
       href: '/asset' as const,
-      label: common('assets'),
+      label: t('assetHubs'),
       icon: BarChart3,
       matches: ['/asset'],
     },
   ];
-
-  // Strip locale prefix for active detection
-  const pathname = rawPathname?.replace(/^\/(es|zh)/, '') || '/';
 
   return (
     <header className={cn('sticky top-0 z-40', className)}>
@@ -72,12 +64,15 @@ export function SiteHeader({ className }: { className?: string }) {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[rgba(0,102,255,0.12)] via-transparent to-[rgba(120,196,255,0.08)] opacity-60" />
           <div className="relative flex items-center justify-between gap-3">
             {/* Logo */}
-            <Link href="/" className="flex shrink-0 items-center gap-0">
-              <span className="text-lg font-bold tracking-tight text-white/92">
-                TrendAnalysis
-              </span>
-              <span className="text-lg font-bold tracking-tight text-primary">
-                .ai
+            <Link href="/" className="flex shrink-0 items-center">
+              <span className="flex flex-col leading-none">
+                <span className="text-lg font-bold tracking-tight text-white/92">
+                  TrendAnalysis
+                  <span className="text-primary">.ai</span>
+                </span>
+                <span className="hidden text-[10px] font-medium uppercase tracking-[0.14em] text-white/42 md:block">
+                  {t('tagline')}
+                </span>
               </span>
             </Link>
 
@@ -103,7 +98,18 @@ export function SiteHeader({ className }: { className?: string }) {
               })}
 
               {/* Language Switcher */}
-              <LanguageSwitcher locale={locale} pathname={pathname} />
+              <LanguageSwitcher locale={locale} pathname={pathnameWithSearch} languageLabel={t('language')} />
+
+              <Button
+                asChild
+                size="sm"
+                className="ml-2 border-[rgba(0,102,255,0.42)] bg-[rgba(0,102,255,0.18)] text-[rgba(199,228,255,0.98)] hover:bg-[rgba(0,102,255,0.26)]"
+              >
+                <Link href="/terminal">
+                  {t('askQuestion')}
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
+              </Button>
             </nav>
 
             {/* Mobile Menu */}
@@ -119,6 +125,17 @@ export function SiteHeader({ className }: { className?: string }) {
                   <SheetTitle>{t('navigation')}</SheetTitle>
                 </SheetHeader>
                 <nav className="mt-6 flex flex-col gap-1">
+                  <Button
+                    asChild
+                    size="sm"
+                    className="mb-3 w-full justify-center border-[rgba(0,102,255,0.42)] bg-[rgba(0,102,255,0.18)] text-[rgba(199,228,255,0.98)] hover:bg-[rgba(0,102,255,0.26)]"
+                  >
+                    <Link href="/terminal" onClick={() => setMobileOpen(false)}>
+                      {t('askQuestion')}
+                      <ArrowUpRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+
                   {NAV_ITEMS.map(({ href, label, icon: Icon, matches }) => {
                     const active = matches.some((prefix) => pathname === prefix || pathname?.startsWith(prefix + '/'));
                     return (
@@ -141,7 +158,7 @@ export function SiteHeader({ className }: { className?: string }) {
 
                   {/* Mobile Language Switcher */}
                   <div className="mt-4 border-t border-white/[0.08] pt-4">
-                    <LanguageSwitcher locale={locale} pathname={pathname} />
+                    <LanguageSwitcher locale={locale} pathname={pathnameWithSearch} languageLabel={t('language')} />
                   </div>
                 </nav>
               </SheetContent>
@@ -153,8 +170,15 @@ export function SiteHeader({ className }: { className?: string }) {
   );
 }
 
-function LanguageSwitcher({ locale, pathname }: { locale: string; pathname: string }) {
-  const baseUrl = '';
+function LanguageSwitcher({
+  locale,
+  pathname,
+  languageLabel,
+}: {
+  locale: string;
+  pathname: string;
+  languageLabel: string;
+}) {
   const locales = ['en', 'es', 'zh'] as const;
 
   return (
@@ -163,26 +187,28 @@ function LanguageSwitcher({ locale, pathname }: { locale: string; pathname: stri
         <Button
           variant="ghost"
           size="icon"
+          data-testid="locale-switcher-trigger"
           className="h-8 w-8 text-white/50 hover:text-white/80"
         >
           <Globe className="h-3.5 w-3.5" />
-          <span className="sr-only">Language</span>
+          <span className="sr-only">{languageLabel}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[80px]">
         {locales.map((l) => {
-          const href = l === 'en' ? (pathname || '/') : `/${l}${pathname === '/' ? '' : pathname}`;
           return (
             <DropdownMenuItem key={l} asChild>
-              <a
-                href={`${baseUrl}${href}`}
+              <Link
+                href={pathname}
+                locale={l}
+                data-testid={`locale-link-${l}`}
                 className={cn(
                   'cursor-pointer',
                   l === locale && 'font-bold',
                 )}
               >
                 {LOCALE_LABELS[l]}
-              </a>
+              </Link>
             </DropdownMenuItem>
           );
         })}

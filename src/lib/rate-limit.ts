@@ -10,12 +10,14 @@ type RateLimitResult = {
   resetMs: number;
 };
 
+export type RateLimitConfig = { windowMs: number; max: number };
+
 export class RateLimiter {
   private windowMs: number;
   private max: number;
   private hits = new Map<string, number[]>();
 
-  constructor(opts: { windowMs: number; max: number }) {
+  constructor(opts: RateLimitConfig) {
     this.windowMs = opts.windowMs;
     this.max = opts.max;
   }
@@ -59,9 +61,23 @@ export class RateLimiter {
   }
 }
 
-// Pre-configured limiters for API routes
+export const rateLimitConfigs = {
+  run: { windowMs: 60_000, max: 10 }, // 10 pipeline runs / min
+  chat: { windowMs: 60_000, max: 30 }, // 30 chat messages / min
+  price: { windowMs: 60_000, max: 60 }, // 60 price lookups / min
+  serp: { windowMs: 60_000, max: 30 }, // 30 provider-backed SERP lookups / min
+  videos: { windowMs: 60_000, max: 30 }, // 30 provider-backed video lookups / min
+  queryResolve: { windowMs: 60_000, max: 30 }, // 30 query-resolution requests / min
+  subscribe: { windowMs: 60_000, max: 5 }, // 5 subscription requests / min
+} satisfies Record<string, RateLimitConfig>;
+
+// Pre-configured in-memory fallback limiters for API routes.
 export const rateLimiters = {
-  run: new RateLimiter({ windowMs: 60_000, max: 10 }), // 10 pipeline runs / min
-  chat: new RateLimiter({ windowMs: 60_000, max: 30 }), // 30 chat messages / min
-  price: new RateLimiter({ windowMs: 60_000, max: 60 }), // 60 price lookups / min
+  run: new RateLimiter(rateLimitConfigs.run),
+  chat: new RateLimiter(rateLimitConfigs.chat),
+  price: new RateLimiter(rateLimitConfigs.price),
+  serp: new RateLimiter(rateLimitConfigs.serp),
+  videos: new RateLimiter(rateLimitConfigs.videos),
+  queryResolve: new RateLimiter(rateLimitConfigs.queryResolve),
+  subscribe: new RateLimiter(rateLimitConfigs.subscribe),
 };

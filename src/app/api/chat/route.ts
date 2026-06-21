@@ -2,9 +2,11 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { createChatCompletion, getAIConfig } from '@/lib/ai';
+import { getProviderUsage } from '@/lib/budget-guard';
 import { hasDb, getSession as dbGetSession, insertEvent, insertEventBatch } from '@/lib/db';
 import { createLogger } from '@/lib/log';
 import { selectStageModel } from '@/lib/modelRouting';
+import { checkRouteRateLimit } from '@/lib/route-rate-limit';
 import { buildSignalTerminalChatPrompt } from '@/prompts/signalTerminalChat';
 import { asSessionMeta, evidenceItems, getArtifacts, graphEdges, graphNodes, storyClusters, tapeItems } from '@/lib/session-data';
 
@@ -33,26 +35,33 @@ export async function POST(request: Request) {
   const reqId = crypto.randomUUID();
   const log = createLogger({ reqId, route: '/api/chat' });
   const startedAt = Date.now();
+  const rateLimit = await checkRouteRateLimit(request, 'chat');
+  if (!rateLimit.ok) {
+    return rateLimit.response;
+  }
 
   let body: z.infer<typeof ChatRequestSchema>;
   try {
     body = ChatRequestSchema.parse(await request.json());
   } catch {
     log.warn('chat.bad_request', { ms: Date.now() - startedAt });
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Invalid request body' },
+      { status: 400, headers: rateLimit.headers },
+    );
   }
 
   if (!hasDb()) {
     return NextResponse.json(
       { error: 'Database not configured (DATABASE_URL missing).' },
-      { status: 503 },
+      { status: 503, headers: rateLimit.headers },
     );
   }
 
   const sessionRow = await dbGetSession(body.sessionId);
   if (!sessionRow) {
     log.warn('chat.session_not_found', { sessionId: body.sessionId });
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    return NextResponse.json({ error: 'Session not found' }, { status: 404, headers: rateLimit.headers });
   }
 
   const meta = asSessionMeta(sessionRow.meta);
@@ -63,7 +72,18 @@ export async function POST(request: Request) {
   });
   const cfg = getAIConfig({ modelOverride: chatModel || undefined });
   if (!cfg) {
-    return NextResponse.json({ error: 'AI not configured (missing key).' }, { status: 503 });
+    return NextResponse.json(
+      { error: 'AI not configured (missing key).' },
+      { status: 503, headers: rateLimit.headers },
+    );
+  }
+
+  const usageGuard = await getProviderUsage('openrouter');
+  if (!usageGuard.ok) {
+    return NextResponse.json(
+      { error: 'OpenRouter daily call limit exceeded', provider: 'openrouter', calls: usageGuard.calls, limit: usageGuard.limit },
+      { status: 503, headers: rateLimit.headers },
+    );
   }
 
   const artifacts = getArtifacts(meta);
@@ -153,12 +173,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       { error: `Chat model request failed (${cfg.model}). ${message}` },
-      { status: 502 },
+      { status: 502, headers: rateLimit.headers },
     );
   }
 
   const content = result.content.trim() || '';
   const usage = result.usage;
+  const model = result.model || cfg.model;
 
   // Persist to trace for demo/debug. (Best-effort)
   await insertEventBatch([
@@ -171,7 +192,7 @@ export async function POST(request: Request) {
       sessionId: body.sessionId,
       type: 'ai.usage',
       payload: {
-        model: cfg.model,
+        model,
         tag: 'chat',
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
@@ -188,7 +209,7 @@ export async function POST(request: Request) {
   log.info('chat.ok', {
     sessionId: body.sessionId,
     ms: Date.now() - startedAt,
-    model: cfg.model,
+    model,
     total_tokens: usage?.total_tokens ?? 0,
   });
 
@@ -197,12 +218,12 @@ export async function POST(request: Request) {
       ok: Boolean(content),
       content,
       usage: {
-        model: cfg.model,
+        model,
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
         total_tokens: usage?.total_tokens ?? 0,
       },
     },
-    { status: 200 },
+    { status: 200, headers: rateLimit.headers },
   );
 }

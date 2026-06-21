@@ -9,21 +9,22 @@ const inflightCache = new Map<string, Promise<unknown>>();
 export function buildCacheKey(parts: unknown[]): string {
   return parts
     .map((part) => {
-      if (part == null) return '';
-      if (typeof part === 'string') return part;
-      return JSON.stringify(part);
+      const encoded = JSON.stringify(part) ?? String(part);
+      return `${encoded.length}:${encoded}`;
     })
-    .join('::');
+    .join('');
 }
 
 export async function getOrComputeCached<T>({
   key,
   ttlMs,
   loader,
+  shouldCache,
 }: {
   key: string;
   ttlMs: number;
   loader: () => Promise<T>;
+  shouldCache?: (value: T) => boolean;
 }): Promise<T> {
   const now = Date.now();
   const cached = valueCache.get(key);
@@ -36,7 +37,7 @@ export async function getOrComputeCached<T>({
 
   const promise = loader()
     .then((value) => {
-      if (ttlMs > 0) {
+      if (ttlMs > 0 && (shouldCache ? shouldCache(value) : true)) {
         valueCache.set(key, { value, expiresAt: Date.now() + ttlMs });
       }
       return value;
@@ -52,4 +53,9 @@ export async function getOrComputeCached<T>({
 export function clearServerCaches() {
   valueCache.clear();
   inflightCache.clear();
+}
+
+export function invalidateServerCache(key: string) {
+  valueCache.delete(key);
+  inflightCache.delete(key);
 }

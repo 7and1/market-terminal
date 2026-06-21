@@ -2,6 +2,7 @@ import type { TimelineItem } from '@/components/terminal/EvidenceTimeline';
 import type { SessionSnapshotArtifacts } from '@/components/terminal/model';
 import type { ReferenceContext, TracePageState, UsageSummary } from '@/lib/session-data';
 import type { EvidenceItem } from '@/lib/types';
+import { normalizeQueryLocale } from '@/lib/query-copy';
 
 export type ChatMessage = {
   id: string;
@@ -24,10 +25,18 @@ export type SessionsListResponse = {
 };
 
 export type PublishedReportState = {
+  slug: string;
+  locale: string;
   fullUrl: string;
   relativeUrl: string;
   alreadyPublished: boolean;
 };
+
+export function buildPublishedReportPath(slug: string, locale?: string | null): string {
+  const normalizedLocale = normalizeQueryLocale(locale);
+  const localePrefix = normalizedLocale === 'en' ? '' : `/${normalizedLocale}`;
+  return `${localePrefix}/report/${slug}`;
+}
 
 export function createEmptyTracePage(): TracePageState {
   return {

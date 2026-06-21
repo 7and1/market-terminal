@@ -8,6 +8,22 @@ on:
 jobs:
   build-check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: trendanalysis
+          POSTGRES_PASSWORD: trendanalysis
+          POSTGRES_DB: trendanalysis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trendanalysis -d trendanalysis_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgres://trendanalysis:trendanalysis@127.0.0.1:5432/trendanalysis_test
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +39,9 @@ jobs:
 
       - name: Type check
         run: npm run typecheck
+
+      - name: Apply test schema
+        run: DATABASE_URL="$TEST_DATABASE_URL" npm run schema:apply
 
       - name: Test
         run: npm run test
@@ -41,17 +60,31 @@ jobs:
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: root
+          username: deploy-trendanalysis
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             set -e
             APP_DIR="/opt/docker-projects/standalone-apps/brightdata/market-signal-terminal"
             CONTAINER_NAME="market-terminal"
+            TAG="${{ github.sha }}"
             cd "$APP_DIR"
             git fetch origin main
             git reset --hard origin/main
-            docker compose build --no-cache
-            docker compose up -d
+            if docker image inspect trendanalysis:current >/dev/null 2>&1; then
+              docker tag trendanalysis:current trendanalysis:previous
+            fi
+            TAG="$TAG" docker compose build --no-cache
+            docker tag "trendanalysis:$TAG" trendanalysis:current
+            if ! TAG="$TAG" docker compose up -d --wait; then
+              echo "DEPLOY UNHEALTHY: compose wait failed; rolling back"
+              TAG=previous docker compose up -d --wait || true
+              exit 1
+            fi
+            if ! curl -fsS http://127.0.0.1:3100/api/health >/tmp/trendanalysis-health.json; then
+              echo "DEPLOY UNHEALTHY: health gate failed; rolling back"
+              TAG=previous docker compose up -d --wait || true
+              exit 1
+            fi
             docker exec "$CONTAINER_NAME" node scripts/apply-schema.mjs
             sh scripts/install-cleanup-cron.sh "$APP_DIR" "$CONTAINER_NAME"
             echo "Deployed at $(date)"

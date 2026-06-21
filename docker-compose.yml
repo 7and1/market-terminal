@@ -1,16 +1,27 @@
 services:
   market-terminal:
     build: .
+    image: trendanalysis:${TAG:-latest}
     container_name: market-terminal
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: "1.5"
+    pids_limit: 256
     ports:
       - "3100:3000"
     env_file:
       - .env.production
     environment:
       - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=768
       - NEXT_PUBLIC_UMAMI_URL=${NEXT_PUBLIC_UMAMI_URL:-}
       - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - proxy-tier
       - supabase-tier

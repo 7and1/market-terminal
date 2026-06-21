@@ -49,3 +49,16 @@ CLAUDE.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# agent / orchestration artifacts (local only, never commit)
+/.context/
+/.codex-results/
+/playwright-results/
+/playwright-report/
+*.zip
+*.patch
+/OPTIMIZATION_REPORT.md
+/REVIEW-REMEDIATION-PLAN.md
+/WEB_COLLAB_PACKAGE.md
+/CHATGPT_WEB_HANDOFF.md
+/chatgpt-web-prompt-latest.md

@@ -6,6 +6,7 @@ import { env } from '@/lib/env';
 import { ensureMinimumGraph, enrichEntitiesFromEvidence, enrichGraphFromTapeAndEvidence, enforceLinkCoherence, normalizeNodeTypeByLabel } from '@/lib/run-pipeline/graph-heuristics';
 import type { EvidenceItem } from '@/lib/run-pipeline/contracts';
 import { truncateText } from '@/lib/run-pipeline/utils';
+import { getTopicSearchHints } from '@/lib/topic-catalog';
 import { buildSignalTerminalImpactPrompt } from '@/prompts/signalTerminalImpact';
 
 const GraphExpansionSchema = z.object({
@@ -73,7 +74,9 @@ function shouldExpandImpact({
     .join('\n')
     .toLowerCase();
 
-  const macroSignal = /(gold|xau|dxy|dollar|rates?|yield|treasury|cpi|inflation|etf|oil|wti|brent|miners?|mstr|microstrategy|nasdaq|equities?|spx|s\\&p)/.test(hay);
+  const hints = getTopicSearchHints(topic);
+  const hintedImpact = hints?.impactKeywords?.some((term) => hay.includes(term.toLowerCase())) ?? false;
+  const macroSignal = hintedImpact || /\b(fed|fomc|dollar|rates?|yields?|treasury|cpi|inflation|nasdaq|equities?|spx|s&p|s and p)\b/.test(hay);
   if (!macroSignal && !densityLow) return false;
 
   const assetCount = nodes.filter((n) => n.type === 'asset').length;
@@ -146,6 +149,7 @@ export async function expandGraphImpact({
       system: impactPrompt.system,
       user: impactPrompt.user,
       temperature: 0.15,
+      maxTokens: 1200,
       telemetry: { tag: 'impact', onUsage: onAiUsage },
     });
   } catch {
@@ -185,6 +189,7 @@ export async function expandGraphImpact({
       type: e.type,
       confidence: Math.max(0, Math.min(1, e.confidence)),
       evidenceIds: eids,
+      origin: 'ai',
       rationale: typeof e.rationale === 'string' ? truncateText(e.rationale, 160) : undefined,
     });
     edgeIds.add(e.id);

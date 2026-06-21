@@ -45,9 +45,10 @@ export async function fetchTopicPrice(topic: string): Promise<TopicPriceResponse
   }
 
   const cacheKey = buildCacheKey(['coingecko', norm.id, 'usd', '1d']);
-  return getOrComputeCached({
+  const cached = await getOrComputeCached<TopicPriceResponse>({
     key: cacheKey,
     ttlMs: PRICE_TTL_MS,
+    shouldCache: (value) => value.ok && value.series.length > 0 && value.timestamps.length > 0,
     loader: async () => {
       const cgUrl = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(norm.id)}/market_chart?vs_currency=usd&days=1`;
       try {
@@ -98,4 +99,6 @@ export async function fetchTopicPrice(topic: string): Promise<TopicPriceResponse
       }
     },
   });
+
+  return { ...cached, topic };
 }

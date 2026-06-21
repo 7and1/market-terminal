@@ -123,7 +123,7 @@ export function ChatPanel({
   ].slice(0, 8);
 
   return (
-    <Card className="h-full">
+    <Card className="self-start">
       <CardHeader className="flex-row items-start justify-between gap-3 border-b border-white/[0.08]">
         <div className="flex items-center gap-2">
           <Search className="h-4 w-4 text-white/80" />

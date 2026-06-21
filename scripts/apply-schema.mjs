@@ -22,7 +22,12 @@ async function main() {
   });
 
   try {
-    await pool.query(sql);
+    await pool.query('SELECT pg_advisory_lock(421337)');
+    try {
+      await pool.query(sql);
+    } finally {
+      await pool.query('SELECT pg_advisory_unlock(421337)');
+    }
     console.log(JSON.stringify({ ok: true, schemaPath, appliedAt: new Date().toISOString() }));
   } finally {
     await pool.end();

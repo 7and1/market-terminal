@@ -1,14 +1,25 @@
-import OpenAI from 'openai';
 import { z } from 'zod';
 
+import { assertProviderBudget, recordProviderCall } from '@/lib/budget-guard';
 import { env } from '@/lib/env';
-import { buildCacheKey, getOrComputeCached } from '@/lib/server-cache';
-import { normalizeProviderError } from '@/lib/provider-error';
+import { buildCacheKey, getOrComputeCached, invalidateServerCache } from '@/lib/server-cache';
+import { normalizeProviderError, providerErrorFromStatus } from '@/lib/provider-error';
 
 export type AIConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  fallbackModels?: string[];
+};
+
+type ChatCompletionResponse = {
+  choices?: Array<{
+    message?: {
+      content?: unknown;
+    };
+    finish_reason?: string | null;
+  }>;
+  usage?: AIUsage;
 };
 
 type AIUsage = {
@@ -19,6 +30,7 @@ type AIUsage = {
 
 type AIChatResult = {
   content: string;
+  model: string;
   usage?: AIUsage;
   finishReason?: string | null;
 };
@@ -341,18 +353,93 @@ export function getAIConfig({
     apiKey,
     baseURL: base.baseURL,
     model: modelOverride || base.model,
+    fallbackModels: env.ai.openrouter.modelFallbacks,
   };
 }
 
+function chatCompletionsUrl(baseURL: string) {
+  const trimmed = (baseURL || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+  return trimmed.endsWith('/chat/completions') ? trimmed : `${trimmed}/chat/completions`;
+}
+
 export function createAIClient(config: AIConfig) {
-  return new OpenAI({
-    apiKey: config.apiKey,
-    baseURL: config.baseURL,
-    defaultHeaders: {
+  return {
+    chatCompletionsUrl: chatCompletionsUrl(config.baseURL),
+  };
+}
+
+async function postChatCompletion({
+  config,
+  model,
+  body,
+}: {
+  config: AIConfig;
+  model: string;
+  body: Record<string, unknown>;
+}): Promise<ChatCompletionResponse> {
+  const response = await fetch(chatCompletionsUrl(config.baseURL), {
+    method: 'POST',
+    cache: 'no-store',
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
       // Optional but recommended by OpenRouter for analytics.
       'X-Title': 'TrendAnalysis.ai',
     },
+    body: JSON.stringify({ ...body, model }),
   });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    const snippet = text.replace(/\s+/g, ' ').slice(0, 240);
+    throw providerErrorFromStatus(
+      'openrouter',
+      response.status,
+      `AI request failed (${response.status})${snippet ? `: ${snippet}` : ''}`,
+    );
+  }
+
+  return (await response.json()) as ChatCompletionResponse;
+}
+
+function uniqueModels(models: Array<string | undefined>) {
+  return models
+    .filter((model): model is string => Boolean(model))
+    .filter((model, idx, arr) => arr.indexOf(model) === idx);
+}
+
+function shouldRetryWithFallbackModel(error: unknown) {
+  const err = normalizeProviderError('openrouter', error, 'AI request failed');
+  if (err.status !== 400 && err.status !== 403 && err.status !== 404) return false;
+  return /model|region|available|provider|endpoint|route/i.test(err.message);
+}
+
+function buildChatCompletionCacheKey({
+  config,
+  system,
+  user,
+  temperature,
+  maxTokens,
+  jsonObject,
+}: {
+  config: AIConfig;
+  system: string;
+  user: string;
+  temperature: number;
+  maxTokens?: number;
+  jsonObject: boolean;
+}) {
+  return buildCacheKey([
+    'openrouter.chat',
+    config.baseURL,
+    config.model,
+    config.fallbackModels?.join('|') || '',
+    temperature,
+    maxTokens || '',
+    jsonObject ? 'json' : 'text',
+    system,
+    user,
+  ]);
 }
 
 export async function createChatCompletion({
@@ -372,46 +459,66 @@ export async function createChatCompletion({
   cacheTtlMs?: number;
   jsonObject?: boolean;
 }): Promise<AIChatResult> {
-  const client = createAIClient(config);
-  const cacheKey = buildCacheKey([
-    'openrouter.chat',
-    config.baseURL,
-    config.model,
-    temperature,
-    maxTokens || '',
-    jsonObject ? 'json' : 'text',
+  const cacheKey = buildChatCompletionCacheKey({
+    config,
     system,
     user,
-  ]);
+    temperature,
+    maxTokens,
+    jsonObject,
+  });
 
   return getOrComputeCached({
     key: cacheKey,
     ttlMs: cacheTtlMs,
     loader: async () => {
-      try {
-        const res = await client.chat.completions.create({
-          model: config.model,
-          temperature,
-          ...(typeof maxTokens === 'number' ? { max_tokens: maxTokens } : null),
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-          ...(jsonObject ? { response_format: { type: 'json_object' } as const } : null),
-        });
+      const models = uniqueModels([config.model, ...(config.fallbackModels || [])]);
+      let lastError: unknown = null;
 
-        return {
-          content: normalizeMessageContent(res.choices?.[0]?.message?.content || ''),
-          usage: {
-            prompt_tokens: res.usage?.prompt_tokens,
-            completion_tokens: res.usage?.completion_tokens,
-            total_tokens: res.usage?.total_tokens,
-          },
-          finishReason: res.choices?.[0]?.finish_reason || null,
-        };
-      } catch (e) {
-        throw normalizeProviderError('openrouter', e, 'AI request failed');
+      for (let idx = 0; idx < models.length; idx += 1) {
+        const model = models[idx];
+        try {
+          await assertProviderBudget('openrouter');
+          const res = await postChatCompletion({
+            config,
+            model,
+            body: {
+              temperature,
+              ...(typeof maxTokens === 'number' ? { max_tokens: maxTokens } : null),
+              messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: user },
+              ],
+              ...(jsonObject ? { response_format: { type: 'json_object' } as const } : null),
+            },
+          });
+          await recordProviderCall('openrouter', {
+            ok: true,
+            operation: 'chat.completions',
+            tokens: res.usage?.total_tokens || 0,
+          });
+
+          return {
+            content: normalizeMessageContent(res.choices?.[0]?.message?.content || ''),
+            model,
+            usage: {
+              prompt_tokens: res.usage?.prompt_tokens,
+              completion_tokens: res.usage?.completion_tokens,
+              total_tokens: res.usage?.total_tokens,
+            },
+            finishReason: res.choices?.[0]?.finish_reason || null,
+          };
+        } catch (e) {
+          lastError = e;
+          await recordProviderCall('openrouter', { ok: false, operation: 'chat.completions' });
+          if (idx < models.length - 1 && shouldRetryWithFallbackModel(e)) {
+            continue;
+          }
+          throw normalizeProviderError('openrouter', e, 'AI request failed');
+        }
       }
+
+      throw normalizeProviderError('openrouter', lastError, 'AI request failed');
     },
   });
 }
@@ -422,6 +529,7 @@ export async function chatJson<TSchema extends z.ZodTypeAny>({
   system,
   user,
   temperature = 0.2,
+  maxTokens = 900,
   telemetry,
 }: {
   config: AIConfig;
@@ -429,6 +537,7 @@ export async function chatJson<TSchema extends z.ZodTypeAny>({
   system: string;
   user: string;
   temperature?: number;
+  maxTokens?: number;
   telemetry?: {
     tag?: string;
     onUsage?: (u: {
@@ -440,102 +549,124 @@ export async function chatJson<TSchema extends z.ZodTypeAny>({
     }) => void;
   };
 }): Promise<z.infer<TSchema>> {
+  const cacheKey = buildChatCompletionCacheKey({
+    config,
+    system,
+    user,
+    temperature,
+    maxTokens,
+    jsonObject: true,
+  });
   const result = await createChatCompletion({
     config,
     system,
     user,
     temperature,
+    maxTokens,
     jsonObject: true,
   });
 
-  telemetry?.onUsage?.({
-    model: config.model,
-    tag: telemetry.tag,
-    prompt_tokens: result.usage?.prompt_tokens,
-    completion_tokens: result.usage?.completion_tokens,
-    total_tokens: result.usage?.total_tokens,
-  });
+  try {
+    telemetry?.onUsage?.({
+      model: result.model,
+      tag: telemetry.tag,
+      prompt_tokens: result.usage?.prompt_tokens,
+      completion_tokens: result.usage?.completion_tokens,
+      total_tokens: result.usage?.total_tokens,
+    });
 
-  const finishReason = result.finishReason || 'unknown';
-  const rawContent = result.content || '{}';
-  const cleanedRaw = normalizeJsonQuotes(stripUnicodeNoise(rawContent));
-  const unique = (arr: string[]) => arr.filter((v, idx) => v && arr.indexOf(v) === idx);
-  const baseCandidates = unique([
-    cleanedRaw,
-    stripCodeFence(cleanedRaw),
-    normalizeJsonQuotes(stripCodeFence(rawContent)),
-  ]);
-  const candidates = unique(
-    baseCandidates.flatMap((candidate) => {
-      const candidateNoComments = stripJsonComments(candidate);
-      const balanced = extractBalancedJson(candidateNoComments) || extractBalancedJson(candidate);
-      const balancedObject =
-        extractBalancedObject(candidateNoComments) || extractBalancedObject(candidate);
-      const autoClosed = autoCloseLikelyTruncatedJson(candidateNoComments);
-      const cands = [candidate, candidateNoComments];
-      cands.push(stripTrailingCommas(candidate));
-      cands.push(stripTrailingCommas(candidateNoComments));
-      cands.push(autoClosed);
-      cands.push(stripTrailingCommas(autoClosed));
-      if (balanced) {
-        cands.push(balanced);
-        cands.push(stripTrailingCommas(balanced));
-      }
-      if (balancedObject) {
-        cands.push(balancedObject);
-        cands.push(stripTrailingCommas(balancedObject));
-      }
-      return cands;
-    }),
-  );
-
-  let parsed: unknown | undefined;
-  let parseError: unknown = null;
-  for (const candidate of candidates) {
-    try {
-      parsed = JSON.parse(candidate);
-
-      // Some models return JSON encoded as a string literal, occasionally twice.
-      for (let depth = 0; depth < 2; depth += 1) {
-        if (typeof parsed === 'string' && isLikelyJsonText(parsed)) {
-          parsed = JSON.parse(parsed);
-        } else {
-          break;
-        }
-      }
-      break;
-    } catch (e) {
-      parseError = e;
+    const finishReason = result.finishReason || 'unknown';
+    const rawContent = result.content || '{}';
+    if (finishReason === 'length') {
+      const preview = rawContent.slice(0, 220);
+      throw new Error(
+        `Model output was truncated (model=${result.model}, finish_reason=length). First 220 chars: ${preview}`,
+      );
     }
-  }
-
-  if (parsed === undefined) {
-    const preview = rawContent.slice(0, 220);
-    const suffix = parseError instanceof Error ? ` parse_error=${parseError.message}` : '';
-    throw new Error(
-      `Model did not return valid JSON (model=${config.model}, finish_reason=${finishReason}). First 220 chars: ${preview}${suffix}`,
+    const cleanedRaw = normalizeJsonQuotes(stripUnicodeNoise(rawContent));
+    const unique = (arr: string[]) => arr.filter((v, idx) => v && arr.indexOf(v) === idx);
+    const baseCandidates = unique([
+      cleanedRaw,
+      stripCodeFence(cleanedRaw),
+      normalizeJsonQuotes(stripCodeFence(rawContent)),
+    ]);
+    const candidates = unique(
+      baseCandidates.flatMap((candidate) => {
+        const candidateNoComments = stripJsonComments(candidate);
+        const balanced = extractBalancedJson(candidateNoComments) || extractBalancedJson(candidate);
+        const balancedObject =
+          extractBalancedObject(candidateNoComments) || extractBalancedObject(candidate);
+        const autoClosed = autoCloseLikelyTruncatedJson(candidateNoComments);
+        const cands = [candidate, candidateNoComments];
+        cands.push(stripTrailingCommas(candidate));
+        cands.push(stripTrailingCommas(candidateNoComments));
+        if (finishReason !== 'length') {
+          cands.push(autoClosed);
+          cands.push(stripTrailingCommas(autoClosed));
+        }
+        if (balanced) {
+          cands.push(balanced);
+          cands.push(stripTrailingCommas(balanced));
+        }
+        if (balancedObject) {
+          cands.push(balancedObject);
+          cands.push(stripTrailingCommas(balancedObject));
+        }
+        return cands;
+      }),
     );
-  }
 
-  const validationCandidates = buildValidationCandidates(parsed);
-  for (const candidate of validationCandidates) {
-    const validated = schema.safeParse(candidate);
-    if (validated.success) return validated.data;
-  }
+    let parsed: unknown | undefined;
+    let parseError: unknown = null;
+    for (const candidate of candidates) {
+      try {
+        parsed = JSON.parse(candidate);
 
-  {
-    const root =
-      parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed;
-    const firstFail = schema.safeParse(validationCandidates[0]);
-    const issues = firstFail.success
-      ? ''
-      : firstFail.error.issues
-      .slice(0, 3)
-      .map((issue) => `${issue.path.join('.') || '$'}:${issue.code}`)
-      .join(',');
-    const preview = rawContent.slice(0, 220);
-    throw new Error(
-      `Model JSON schema mismatch (model=${config.model}, finish_reason=${finishReason}, root=${root}, issues=${issues}). First 220 chars: ${preview}`,
-    );
+        // Some models return JSON encoded as a string literal, occasionally twice.
+        for (let depth = 0; depth < 2; depth += 1) {
+          if (typeof parsed === 'string' && isLikelyJsonText(parsed)) {
+            parsed = JSON.parse(parsed);
+          } else {
+            break;
+          }
+        }
+        break;
+      } catch (e) {
+        parseError = e;
+      }
+    }
+
+    if (parsed === undefined) {
+      const preview = rawContent.slice(0, 220);
+      const suffix = parseError instanceof Error ? ` parse_error=${parseError.message}` : '';
+      throw new Error(
+        `Model did not return valid JSON (model=${result.model}, finish_reason=${finishReason}). First 220 chars: ${preview}${suffix}`,
+      );
+    }
+
+    const validationCandidates = buildValidationCandidates(parsed);
+    for (const candidate of validationCandidates) {
+      const validated = schema.safeParse(candidate);
+      if (validated.success) return validated.data;
+    }
+
+    {
+      const root =
+        parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed;
+      const firstFail = schema.safeParse(validationCandidates[0]);
+      const issues = firstFail.success
+        ? ''
+        : firstFail.error.issues
+        .slice(0, 3)
+        .map((issue) => `${issue.path.join('.') || '$'}:${issue.code}`)
+        .join(',');
+      const preview = rawContent.slice(0, 220);
+      throw new Error(
+        `Model JSON schema mismatch (model=${result.model}, finish_reason=${finishReason}, root=${root}, issues=${issues}). First 220 chars: ${preview}`,
+      );
+    }
+  } catch (error) {
+    invalidateServerCache(cacheKey);
+    throw error;
   }
 }

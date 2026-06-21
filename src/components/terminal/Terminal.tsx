@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useLocale, useTranslations } from 'next-intl';
 
 import { cn, apiPath } from '@/lib/utils';
 import { PipelineTimeline, type PipelineStep } from '@/components/terminal/PipelineTimeline';
@@ -13,36 +14,21 @@ import { WorkspacePanel } from '@/components/terminal/WorkspacePanel';
 import { ChatPanel } from '@/components/terminal/ChatPanel';
 import { EvidenceDrawer, TraceDrawer, FullscreenModal } from '@/components/terminal/EvidenceModal';
 import { InsightPanels, type InsightPanelKey } from '@/components/terminal/InsightPanels';
+import { QueryResolutionPanel, type QueryResolutionPanelState } from '@/components/query/QueryResolutionPanel';
 import { buildMediaGraph, isUuid, normalizeTopicKey, now, uniqueTagsFromSession } from '@/components/terminal/helpers';
 import { useTerminalChatContext } from '@/components/terminal/hooks/useTerminalChatContext';
 import { useTerminalReplay } from '@/components/terminal/hooks/useTerminalReplay';
 import { useTerminalRun } from '@/components/terminal/hooks/useTerminalRun';
 import { useTerminalSharedState } from '@/components/terminal/hooks/useTerminalSharedState';
 import type { PriceResponse, VideosResponse } from '@/components/terminal/model';
+import { getTerminalTypedExamples } from '@/lib/query-copy';
 import type { EvidenceItem } from '@/lib/types';
-
-const STEP_LABEL: Record<PipelineStep, string> = {
-  idle: 'Waiting',
-  plan: 'Planning',
-  search: 'Searching',
-  scrape: 'Scraping',
-  extract: 'Extracting',
-  link: 'Linking',
-  cluster: 'Clustering',
-  render: 'Rendering',
-  ready: 'Ready',
-};
-
-const TOPIC_TYPED_EXAMPLES = [
-  'Why is BTC down today? Map catalysts in the last 6 hours.',
-  'NVDA move after earnings: what are the strongest evidence links?',
-  'Oil, DXY, and rates: what changed since market open?',
-  'Gold vs Bitcoin today: which macro drivers explain the divergence?',
-  'Which Fed, tariff, or policy headlines are moving semis right now?',
-] as const;
 
 export function Terminal() {
   const searchParams = useSearchParams();
+  const locale = useLocale();
+  const t = useTranslations('terminal');
+  const workspaceT = useTranslations('workspace');
   const store = useTerminalSharedState();
   const {
     topic,
@@ -114,6 +100,8 @@ export function Terminal() {
   const [graphFullscreen, setGraphFullscreen] = useState(false);
   const [graphFitSignal, setGraphFitSignal] = useState(0);
   const autoRunTopicRef = useRef<string | null>(null);
+  const [queryResolution, setQueryResolution] = useState<QueryResolutionPanelState | null>(null);
+  const typedExamples = getTerminalTypedExamples(locale);
 
   const queryTopic = useMemo(() => {
     const raw = searchParams.get('q') || searchParams.get('topic') || '';
@@ -121,18 +109,28 @@ export function Terminal() {
   }, [searchParams]);
   const queryRunAt = useMemo(() => searchParams.get('runAt') || '', [searchParams]);
   const autoRunKey = useMemo(() => `${queryTopic}::${queryRunAt}`, [queryRunAt, queryTopic]);
+  const queryRunReason = useMemo(() => {
+    const raw = searchParams.get('runReason');
+    return raw === 'refresh' || raw === 'run_as_typed' || raw === 'direct' ? raw : null;
+  }, [searchParams]);
+  const queryReportKey = useMemo(() => {
+    const raw = searchParams.get('reportKey') || '';
+    return raw.trim() || null;
+  }, [searchParams]);
 
   const replaceUrlWithSessionId = useCallback((sessionId: string) => {
     if (typeof window === 'undefined') return;
     if (!isUuid(sessionId)) return;
     const params = new URLSearchParams(window.location.search);
     const sameSession = params.get('sessionId') === sessionId;
-    const hasAutoRunParams = params.has('q') || params.has('topic') || params.has('runAt');
+    const hasAutoRunParams = params.has('q') || params.has('topic') || params.has('runAt') || params.has('runReason') || params.has('reportKey');
     if (sameSession && !hasAutoRunParams) return;
     params.set('sessionId', sessionId);
     params.delete('q');
     params.delete('topic');
     params.delete('runAt');
+    params.delete('runReason');
+    params.delete('reportKey');
     const query = params.toString();
     const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}`;
     window.history.replaceState(window.history.state, '', nextUrl);
@@ -177,6 +175,7 @@ export function Terminal() {
       setTypedTopicHint('');
       return;
     }
+    if (typedExamples.length === 0) return;
     let stopped = false;
     let timer: number | null = null;
     let phraseIndex = 0;
@@ -189,7 +188,7 @@ export function Terminal() {
 
     const tick = () => {
       if (stopped) return;
-      const phrase = TOPIC_TYPED_EXAMPLES[phraseIndex % TOPIC_TYPED_EXAMPLES.length];
+      const phrase = typedExamples[phraseIndex % typedExamples.length];
       if (!deleting) {
         charIndex = Math.min(phrase.length, charIndex + 1);
         setTypedTopicHint(phrase.slice(0, charIndex));
@@ -217,7 +216,7 @@ export function Terminal() {
       stopped = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [topic]);
+  }, [topic, typedExamples]);
 
   const evidenceById = useMemo(() => {
     const map = new Map<string, EvidenceItem>();
@@ -296,6 +295,7 @@ export function Terminal() {
 
   const run = useTerminalRun({
     store,
+    locale,
     debugBrowserLogs,
     replaceUrlWithSessionId,
     resetInteractiveView,
@@ -374,7 +374,7 @@ export function Terminal() {
       videosInFlightRef.current = true;
       setVideosLoading(true);
       try {
-        const res = await fetch(apiPath(`/api/videos?topic=${encodeURIComponent(cleaned)}&limit=6`), { cache: 'no-store' });
+        const res = await fetch(apiPath(`/api/videos?topic=${encodeURIComponent(cleaned)}&limit=6&locale=${encodeURIComponent(locale)}`), { cache: 'no-store' });
         const data = (await res.json()) as VideosResponse;
         setVideos(data);
         store.setSession((prev) => (prev ? { ...prev, videosSnapshot: data } : prev));
@@ -389,13 +389,13 @@ export function Terminal() {
         });
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Video fetch failed';
-        setVideos({ topic: cleaned, fetchedAt: now(), mode: 'mock', items: [], error: message });
+        setVideos({ topic: cleaned, fetchedAt: now(), mode: 'unavailable', items: [], error: message });
       } finally {
         videosInFlightRef.current = false;
         setVideosLoading(false);
       }
     },
-    [appendTimeline, persistSnapshot, setVideos, store],
+    [appendTimeline, locale, persistSnapshot, setVideos, store],
   );
 
   const fetchPriceData = useCallback(async (query: string): Promise<PriceResponse> => {
@@ -482,6 +482,69 @@ export function Terminal() {
     [fetchPriceData],
   );
 
+  const resolveTopicBeforeRun = useCallback(async (rawTopic: string) => {
+    const cleaned = rawTopic.trim();
+    if (!cleaned) return null;
+    const response = await fetch(apiPath('/api/query/resolve'), {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: cleaned, surface: 'terminal', locale }),
+    });
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : t('resolveFailed'));
+    }
+    return data;
+  }, [locale, t]);
+
+  const handleResolveRejection = useCallback(
+    (payload: Record<string, unknown>) => {
+      const message = typeof payload.message === 'string' ? payload.message : t('rejectFallback');
+      const examples = Array.isArray(payload.supportedExamples)
+        ? payload.supportedExamples.map((item) => String(item || '')).filter(Boolean).slice(0, 3)
+        : [];
+      const suggestion = examples.length ? t('tryExamples', { examples: examples.join(' | ') }) : '';
+      store.setWarnings((prev) => [message, ...(suggestion ? [suggestion] : []), ...prev].slice(0, 4));
+      store.setMessages((prev) => [
+        ...prev,
+        {
+          id: `m_${Math.random().toString(16).slice(2)}`,
+          role: 'assistant',
+          content: [message, suggestion].filter(Boolean).join('\n'),
+          createdAt: now(),
+        },
+      ]);
+    },
+    [store, t],
+  );
+
+  const submitResolvedTopic = useCallback(
+    async (rawTopic: string) => {
+      const cleaned = rawTopic.trim();
+      if (!cleaned) return;
+      setQueryResolution(null);
+      const payload = await resolveTopicBeforeRun(cleaned);
+      if (!payload) return;
+
+      if (payload.decision === 'reject') {
+        handleResolveRejection(payload);
+        return;
+      }
+
+      if (payload.decision === 'reuse' || payload.decision === 'ambiguous' || payload.decision === 'run_private') {
+        setQueryResolution(payload as QueryResolutionPanelState);
+        return;
+      }
+
+      await start(cleaned, undefined, {
+        reportKey: typeof payload.reportKey === 'string' ? payload.reportKey : null,
+        runReason: 'direct',
+      });
+    },
+    [handleResolveRejection, resolveTopicBeforeRun, start],
+  );
+
   useEffect(() => {
     if (replay.snapshotSessionId) return;
     if (!queryTopic) {
@@ -492,8 +555,17 @@ export function Terminal() {
     if (running || runInFlightRef.current) return;
     autoRunTopicRef.current = autoRunKey;
     setTopic(queryTopic);
-    void start(queryTopic).catch(() => undefined);
-  }, [autoRunKey, queryTopic, replay.snapshotSessionId, runInFlightRef, running, setTopic, start]);
+    if (queryRunReason || queryReportKey) {
+      setQueryResolution(null);
+      void start(queryTopic, undefined, {
+        reportKey: queryReportKey,
+        runReason: queryRunReason || 'direct',
+        autoPublishOnReady: queryRunReason === 'refresh' && Boolean(queryReportKey),
+      }).catch(() => undefined);
+      return;
+    }
+    void submitResolvedTopic(queryTopic).catch(() => undefined);
+  }, [autoRunKey, queryReportKey, queryRunReason, queryTopic, replay.snapshotSessionId, runInFlightRef, running, setTopic, start, submitResolvedTopic]);
 
   useEffect(() => {
     if (!session) return;
@@ -510,8 +582,14 @@ export function Terminal() {
     if (!selectedEdgeId) return;
     const edge = session.edges.find((item) => item.id === selectedEdgeId);
     if (!edge) return;
-    openEvidence(`Edge: ${edge.type.replace(/_/g, ' ')} (${Math.round(edge.confidence * 100)}%)`, edge.evidenceIds, edge.rationale || null);
-  }, [openEvidence, selectedEdgeId, session]);
+    const evidenceIds = edge.evidenceIds || [];
+    const structuralNote = evidenceIds.length ? null : workspaceT('inferredEdgeNoEvidence');
+    openEvidence(
+      `Edge: ${edge.type.replace(/_/g, ' ')} (${Math.round(edge.confidence * 100)}%)`,
+      evidenceIds,
+      edge.rationale || structuralNote,
+    );
+  }, [openEvidence, selectedEdgeId, session, workspaceT]);
 
   useEffect(() => {
     if (replay.snapshotReadOnly) return;
@@ -580,7 +658,21 @@ export function Terminal() {
   }, [videos?.fetchedAt, videos?.items, videos?.topic]);
 
   const isEmpty = session === null;
-  const stepLabel = session ? STEP_LABEL[session.step] : STEP_LABEL.idle;
+  const stepLabels = useMemo<Record<PipelineStep, string>>(
+    () => ({
+      idle: t('stepIdle'),
+      plan: t('stepPlan'),
+      search: t('stepSearch'),
+      scrape: t('stepScrape'),
+      extract: t('stepExtract'),
+      link: t('stepLink'),
+      cluster: t('stepCluster'),
+      render: t('stepRender'),
+      ready: t('stepReady'),
+    }),
+    [t],
+  );
+  const stepLabel = session ? stepLabels[session.step] : stepLabels.idle;
   const progress = session?.progress ?? 0;
   const tagOptions = useMemo(() => uniqueTagsFromSession(session), [session]);
 
@@ -703,9 +795,12 @@ export function Terminal() {
             typedTopicHint={typedTopicHint}
             mode={mode}
             running={running}
-            onTopicChange={setTopic}
+            onTopicChange={(value) => {
+              setTopic(value);
+              if (queryResolution) setQueryResolution(null);
+            }}
             onModeChange={setMode}
-            onSubmit={() => void start(topic).catch(() => undefined)}
+            onSubmit={() => void submitResolvedTopic(topic).catch(() => undefined)}
           />
         }
         pipelineContent={
@@ -730,7 +825,34 @@ export function Terminal() {
       />
 
       <main className="mx-auto max-w-[1520px] px-4 pb-12">
-        <div className={cn('grid gap-5', chatPanelOpen ? 'xl:grid-cols-[minmax(0,1fr)_400px]' : 'grid-cols-1')}>
+        {queryResolution ? (
+          <div className="mb-5">
+            <QueryResolutionPanel
+              resolution={queryResolution}
+              onDismiss={() => setQueryResolution(null)}
+              onRunAsTyped={(resolution) => {
+                setQueryResolution(null);
+                setTopic(resolution.typedQuery);
+                void start(resolution.typedQuery, undefined, { runReason: 'run_as_typed' }).catch(() => undefined);
+              }}
+              onRunPrivate={(resolution) => {
+                setQueryResolution(null);
+                setTopic(resolution.typedQuery);
+                void start(resolution.typedQuery, undefined, { runReason: 'direct' }).catch(() => undefined);
+              }}
+              onScrapeAgain={(resolution) => {
+                setQueryResolution(null);
+                setTopic(resolution.typedQuery);
+                void start(resolution.typedQuery, undefined, {
+                  reportKey: resolution.reuseType === 'report' ? resolution.currentReport?.reportKey : null,
+                  runReason: 'refresh',
+                  autoPublishOnReady: resolution.reuseType === 'report',
+                }).catch(() => undefined);
+              }}
+            />
+          </div>
+        ) : null}
+        <div className={cn('grid items-start gap-5', chatPanelOpen ? 'xl:grid-cols-[minmax(0,1fr)_400px]' : 'grid-cols-1')}>
           <div className="min-w-0 space-y-5">
             <WorkspacePanel
               isEmpty={isEmpty}
@@ -818,47 +940,49 @@ export function Terminal() {
           </div>
 
           {chatPanelOpen ? (
-            <ChatPanel
-              session={session}
-              running={running}
-              chatMode={chatMode}
-              chatInput={chatInput}
-              messages={messages}
-              mentionState={mentionState}
-              showChatSuggestions={showChatSuggestions}
-              plan={plan}
-              search={search}
-              queryQueue={queryQueue}
-              scrapeQueue={scrapeQueue}
-              evidenceSources={(session?.evidence ?? []).map((item) => item.source)}
-              evidenceCount={session?.evidence?.length ?? 0}
-              summariesCount={summariesCount}
-              nodesCount={workspaceGraph.nodes.length}
-              edgesCount={workspaceGraph.edges.length}
-              clustersCount={session?.clusters?.length ?? 0}
-              warningsCount={warnings.length}
-              graphVariant={graphVariant}
-              terminalMode={terminalMode}
-              usageSummary={usageSummary}
-              perfSummary={perfSummary}
-              referenceContext={referenceContext}
-              traceLoadedCount={trace?.events.length ?? 0}
-              traceHasMore={tracePage.hasMore}
-              traceLoadingMore={traceLoadingMore}
-              mode={mode}
-              runMeta={runMeta}
-              onChatModeChange={setChatMode}
-              onChatInputChange={setChatInput}
-              onClose={() => setChatPanelOpen(false)}
-              onRunChat={runChat}
-              onAskWithContext={(query) => void askWithContext(query)}
-              onMentionSelect={(item) => setChatInput((prev) => prev.replace(/@([a-zA-Z0-9_-]*)$/, `@${item} `))}
-              onOpenTrace={() => setTraceOpen(true)}
-              onLoadMoreTrace={() => {
-                if (session?.id) void replay.fetchTrace(session.id, { append: true });
-              }}
-              renderMessageContent={renderMessageContent}
-            />
+            <div className="min-w-0 self-start xl:sticky xl:top-4">
+              <ChatPanel
+                session={session}
+                running={running}
+                chatMode={chatMode}
+                chatInput={chatInput}
+                messages={messages}
+                mentionState={mentionState}
+                showChatSuggestions={showChatSuggestions}
+                plan={plan}
+                search={search}
+                queryQueue={queryQueue}
+                scrapeQueue={scrapeQueue}
+                evidenceSources={(session?.evidence ?? []).map((item) => item.source)}
+                evidenceCount={session?.evidence?.length ?? 0}
+                summariesCount={summariesCount}
+                nodesCount={workspaceGraph.nodes.length}
+                edgesCount={workspaceGraph.edges.length}
+                clustersCount={session?.clusters?.length ?? 0}
+                warningsCount={warnings.length}
+                graphVariant={graphVariant}
+                terminalMode={terminalMode}
+                usageSummary={usageSummary}
+                perfSummary={perfSummary}
+                referenceContext={referenceContext}
+                traceLoadedCount={trace?.events.length ?? 0}
+                traceHasMore={tracePage.hasMore}
+                traceLoadingMore={traceLoadingMore}
+                mode={mode}
+                runMeta={runMeta}
+                onChatModeChange={setChatMode}
+                onChatInputChange={setChatInput}
+                onClose={() => setChatPanelOpen(false)}
+                onRunChat={runChat}
+                onAskWithContext={(query) => void askWithContext(query)}
+                onMentionSelect={(item) => setChatInput((prev) => prev.replace(/@([a-zA-Z0-9_-]*)$/, `@${item} `))}
+                onOpenTrace={() => setTraceOpen(true)}
+                onLoadMoreTrace={() => {
+                  if (session?.id) void replay.fetchTrace(session.id, { append: true });
+                }}
+                renderMessageContent={renderMessageContent}
+              />
+            </div>
           ) : null}
         </div>
       </main>
