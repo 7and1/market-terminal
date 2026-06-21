@@ -1674,8 +1674,7 @@ export async function checkRateLimitCounter({
      ON CONFLICT (bucket) DO UPDATE
        SET hits = CASE
              WHEN market_signal.rate_limit_counters.reset_at <= NOW() THEN 1
-             WHEN market_signal.rate_limit_counters.hits < $3 THEN market_signal.rate_limit_counters.hits + 1
-             ELSE market_signal.rate_limit_counters.hits
+             ELSE market_signal.rate_limit_counters.hits + 1
            END,
            reset_at = CASE
              WHEN market_signal.rate_limit_counters.reset_at <= NOW()
@@ -1684,7 +1683,7 @@ export async function checkRateLimitCounter({
            END,
            updated_at = NOW()
      RETURNING hits, reset_at`,
-    [bucket, windowMs, max],
+    [bucket, windowMs],
   );
   const row = rows[0];
   const hits = Number(row?.hits || 0);
